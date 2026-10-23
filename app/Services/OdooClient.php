@@ -89,6 +89,51 @@ class OdooClient
         return (bool) $this->call($model, 'write', [array_values($ids), $valores]);
     }
 
+    private ?int $ubicacion = null;
+
+    /** Ubicación donde entra la mercadería: ODOO_STOCK_LOCATION_ID o la "Existencias" del primer depósito. */
+    public function ubicacionStock(): int
+    {
+        if ($this->ubicacion === null) {
+            $id = config('odoo.stock_location_id');
+            if (!$id) {
+                $wh = $this->searchRead('stock.warehouse', [], ['lot_stock_id'], 0, 1);
+                $id = is_array($wh[0]['lot_stock_id'] ?? null) ? $wh[0]['lot_stock_id'][0] : null;
+            }
+            if (!$id) throw new RuntimeException('No se encontró el depósito en Odoo.');
+            $this->ubicacion = (int) $id;
+        }
+        return $this->ubicacion;
+    }
+
+    /**
+     * Suma (o resta, con negativo) unidades al stock de cada producto con un ajuste de inventario.
+     * @param array<int,float> $cantidades product_id => unidades
+     * @return array<int,string> product_id => error, solo los que fallaron
+     */
+    public function sumarStock(array $cantidades): array
+    {
+        $loc = $this->ubicacionStock();
+        $ctx = ['context' => ['inventory_mode' => true]];
+        $errores = [];
+        foreach ($cantidades as $pid => $cant) {
+            try {
+                $quant = $this->searchRead('stock.quant', [['product_id', '=', $pid], ['location_id', '=', $loc]], ['quantity'], 0, 1)[0] ?? null;
+                $actual = (float) ($quant['quantity'] ?? 0);
+                $id = $quant['id'] ?? $this->call('stock.quant', 'create', [['product_id' => $pid, 'location_id' => $loc, 'inventory_quantity' => $actual + $cant]], $ctx);
+                $this->call('stock.quant', 'write', [[$id], ['inventory_quantity' => $actual + $cant, 'inventory_quantity_set' => true]], $ctx);
+                $r = $this->call('stock.quant', 'action_apply_inventory', [[$id]], $ctx);
+                // si Odoo devuelve una pantalla (conflicto, número de serie) el ajuste no se hizo
+                if (is_array($r) && isset($r['res_model'])) {
+                    throw new RuntimeException('Odoo pide confirmar el ajuste a mano (' . ($r['name'] ?? $r['res_model']) . ')');
+                }
+            } catch (\Throwable $e) {
+                $errores[$pid] = 'Stock: ' . $e->getMessage();
+            }
+        }
+        return $errores;
+    }
+
     /**
      * Muchos write a la vez, de a $paralelo pedidos simultáneos (uno por uno tarda minutos).
      * @param array<int|string,array{0:int[],1:array}> $escrituras clave => [ids, valores]

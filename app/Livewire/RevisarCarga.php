@@ -124,6 +124,13 @@ class RevisarCarga extends Component
         if ($v !== null && $v > 0) $this->proc()->cambiarPrecio($this->item($id), $v);
     }
 
+    public function cambiarCantidad(int $id, $valor): void
+    {
+        if (!$this->editable()) return;
+        $v = trim((string) $valor) === '' ? null : Precios::numero($valor);
+        $this->item($id)->update(['cantidad' => $v !== null && $v > 0 ? $v : null]);
+    }
+
     public function toggle(int $id): void
     {
         if (!$this->editable()) return;
@@ -243,6 +250,7 @@ class RevisarCarga extends Component
             'items'        => $this->filtrar($this->carga->items())->orderBy('fila')->paginate(50),
             'conteo'       => $conteo,
             'seleccionados'=> (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->count(),
+            'conStock'     => (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->where('cantidad', '>', 0)->count(),
             'resultados'   => $this->buscandoItem ? $this->resultadosBusqueda() : [],
             'editable'     => $this->editable(),
         ]);

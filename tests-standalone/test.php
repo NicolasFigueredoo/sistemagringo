@@ -87,6 +87,10 @@ ok($r['match'] === 'nombre' && $r['odoo_product_id'] === 15, "segundo código pe
 $r = (new Matcher($catCod, [], [['codigo' => 'ABC.990', 'product_id' => 15]], false))->buscar(null, 'ABC990', 'MECHA');
 ok($r['match'] === 'nombre', "código de proveedor sin saber cuál es el proveedor en Odoo -> confirmar");
 
+$mp = new Matcher([['id' => 20, 'nombre' => 'POXIPOL gris 108G/70ML 10 MIN', 'barcode' => null, 'default_code' => 'ST00118']]);
+$r = $mp->buscar(null, 'ST00118-POXIPOL', 'Met. 10 MIN. 108G / 70ML');
+ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 20, "código con la marca pegada ('ST00118-POXIPOL' = 'ST00118') -> verde");
+
 echo "Reajuste sin IVA:\n";
 $v4 = Precios::venta(1000, 50, false);          ok($v4 == 1500.0, "costo 1000 + 50% = $v4");
 

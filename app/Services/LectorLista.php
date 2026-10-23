@@ -88,7 +88,7 @@ class LectorLista
         // renglones que terminan en un precio: si la mayoría se leyó por renglón, usamos ese método
         $conPrecio = count(array_filter($lineas, fn ($l) => preg_match('/\$?\s*\d[\d.,]*\s*\**\s*$/', $l)));
         if (count($filas) >= 5 || (count($filas) >= 1 && count($filas) >= $conPrecio * 0.5)) {
-            self::$columnasSugeridas = ['fila_inicio' => 1, 'col_barcode' => 0, 'col_codigo' => 1, 'col_nombre' => 2, 'col_precio' => 4];
+            self::$columnasSugeridas = ['fila_inicio' => 1, 'col_barcode' => 0, 'col_codigo' => 1, 'col_nombre' => 2, 'col_precio' => 4, 'col_cantidad' => null];
             return $filas;
         }
 
@@ -156,6 +156,8 @@ class LectorLista
                 $m = $mb;
                 $desc = trim(preg_replace('/\s{2,}/', ' ', $m['desc']));
             }
+            // otras columnas de precio pegadas al final: "108G / 70ML 18518.70 11507.35"
+            $desc = trim(preg_replace('/(?:\s+\$?\s*\d{1,3}(?:[.,]?\d{3})*[.,]\d{2})+$/u', '', $desc));
             if ($desc === '' || !preg_match('/\pL{2,}/u', $desc)) continue;   // tiene que tener palabras
             $codigo = trim($m['codigo']);
             $barcode = preg_match('/^\d{8,14}$/', $codigo) ? $codigo : '';
@@ -226,13 +228,13 @@ class LectorLista
 
     /**
      * Adivina qué columna es cada cosa.
-     * @return array{fila_inicio:int,col_barcode:?int,col_codigo:?int,col_nombre:?int,col_precio:?int}
+     * @return array{fila_inicio:int,col_barcode:?int,col_codigo:?int,col_nombre:?int,col_precio:?int,col_cantidad:?int}
      */
     public static function detectarColumnas(array $filas): array
     {
         if (self::$columnasSugeridas) return self::$columnasSugeridas;
 
-        $r = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null];
+        $r = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null, 'col_cantidad' => null];
 
         // 1) por encabezado, en las primeras 15 filas
         foreach (array_slice($filas, 0, 15, true) as $i => $fila) {
@@ -243,6 +245,7 @@ class LectorLista
                 if ($t === '') continue;
                 if ($tmp['col_barcode'] === null && preg_match('/(barra|ean|barcode|cod.*bar)/', $t)) { $tmp['col_barcode'] = $c; $hits++; }
                 elseif ($tmp['col_precio'] === null && preg_match('/(precio|costo|importe|p unit|unitario|valor|lista)/', $t)) { $tmp['col_precio'] = $c; $hits++; }
+                elseif ($tmp['col_cantidad'] === null && preg_match('/^(cant|cantidad|cant\.?|unidades|uds|qty)$/', $t)) { $tmp['col_cantidad'] = $c; }
                 elseif ($tmp['col_nombre'] === null && preg_match('/(desc|nombre|articulo|producto|detalle)/', $t)) { $tmp['col_nombre'] = $c; $hits++; }
                 elseif ($tmp['col_codigo'] === null && preg_match('/(cod|art|sku|ref)/', $t)) { $tmp['col_codigo'] = $c; $hits++; }
             }

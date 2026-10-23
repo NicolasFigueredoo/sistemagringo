@@ -169,7 +169,7 @@ class Procesador
     /** Posibles códigos de un renglón fuera de las columnas elegidas: otras columnas y el principio de la descripción. */
     private static function codigosExtra(array $fila, array $columnas, ?string $nombre): array
     {
-        $usadas = array_filter([$columnas['col_barcode'], $columnas['col_codigo'], $columnas['col_nombre'], $columnas['col_precio']], fn ($c) => $c !== null);
+        $usadas = array_filter([$columnas['col_barcode'], $columnas['col_codigo'], $columnas['col_nombre'], $columnas['col_precio'], $columnas['col_cantidad'] ?? null], fn ($c) => $c !== null);
         $out = [];
         foreach ($fila as $i => $v) {
             $v = trim((string) $v);
@@ -227,6 +227,7 @@ class Procesador
                 $barcode = $celda($f, $columnas['col_barcode']);
                 $codigo = $celda($f, $columnas['col_codigo']);
                 $nombre = $celda($f, $columnas['col_nombre']);
+                $cantidad = Precios::numero($celda($f, $columnas['col_cantidad'] ?? null) ?? '');
 
                 if (!$precio || $precio <= 0) continue;            // títulos, subtotales, etc.
                 if (!$barcode && !$codigo && !$nombre) continue;
@@ -241,6 +242,7 @@ class Procesador
                     'nombre'          => $nombre ? mb_substr($nombre, 0, 250) : null,
                     'unidad'          => isset($f[3]) && $columnas['col_precio'] == 4 ? mb_substr((string) $f[3], 0, 50) : null,
                     'precio_lista'    => $precio,
+                    'cantidad'        => $cantidad > 0 ? $cantidad : null,
                     'descuento'       => $carga->descuento,
                     'costo_nuevo'     => 0,
                     'match'           => $m['match'],
@@ -395,11 +397,11 @@ class Procesador
     {
         foreach ($items->chunk(2000) as $chunk) {
             $ids = $chunk->pluck('odoo_product_id')->unique()->values()->all();
-            $actual = collect($this->odoo->read('product.product', $ids, ['standard_price', 'list_price']))->keyBy('id');
+            $actual = collect($this->odoo->read('product.product', $ids, ['standard_price', 'list_price', 'qty_available']))->keyBy('id');
             DB::transaction(function () use ($chunk, $actual) {
                 foreach ($chunk as $it) {
                     if ($a = $actual->get($it->odoo_product_id)) {
-                        $it->update(['costo_anterior' => $a['standard_price'], 'precio_anterior' => $a['list_price']]);
+                        $it->update(['costo_anterior' => $a['standard_price'], 'precio_anterior' => $a['list_price'], 'stock_anterior' => $a['qty_available'] ?? null]);
                     }
                 }
             });
@@ -507,13 +509,25 @@ class Procesador
             && (!isset($campos[$it->id]['standard_price']) || self::igual($it->costo_anterior, $campos[$it->id]['standard_price'])));
         $errores = $this->escribir($aEscribir, $campos);
 
-        DB::transaction(function () use ($carga, $items, $campos, $errores) {
+        // stock que ingresa: se suma solo a los que se actualizaron bien
+        $conStock = $items->filter(fn ($it) => !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
+        $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
+            $conStock->groupBy('odoo_product_id')->map(fn ($g) => (float) $g->sum('cantidad'))->all()
+        );
+
+        DB::transaction(function () use ($carga, $items, $campos, $errores, $conStock, $erroresStock) {
             foreach ($items as $it) {
                 if (isset($errores[$it->id])) {
                     $it->update(['error' => mb_substr($errores[$it->id], 0, 250)]);
                     continue;
                 }
-                $it->update(['aplicado' => true, 'error' => null]);
+                // el precio quedó; si el stock falló se avisa en el renglón
+                $errStock = $conStock->has($it->id) ? ($erroresStock[$it->odoo_product_id] ?? null) : null;
+                $it->update([
+                    'aplicado'       => true,
+                    'stock_aplicado' => $it->stock_aplicado || ($conStock->has($it->id) && !$errStock),
+                    'error'          => $errStock ? mb_substr($errStock, 0, 250) : null,
+                ]);
                 self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
 
                 // si lo confirmó una persona, recordarlo para la próxima
@@ -540,7 +554,17 @@ class Procesador
         $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_anterior, $it->precio_anterior)])->all();
         $errores = $this->escribir($items, $campos);
 
-        DB::transaction(function () use ($carga, $items, $campos, $errores) {
+        $conStock = $carga->items()->where('stock_aplicado', true)->get();
+        $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
+            $conStock->groupBy('odoo_product_id')->map(fn ($g) => -(float) $g->sum('cantidad'))->all()
+        );
+        $errores += $conStock->filter(fn ($it) => isset($erroresStock[$it->odoo_product_id]))
+            ->mapWithKeys(fn ($it) => [$it->id => $erroresStock[$it->odoo_product_id]])->all();
+
+        DB::transaction(function () use ($carga, $items, $campos, $errores, $conStock) {
+            foreach ($conStock as $it) {
+                if (!isset($errores[$it->id])) $it->update(['stock_aplicado' => false]);
+            }
             foreach ($items as $it) {
                 if (isset($errores[$it->id])) continue;   // sigue aplicado: se puede volver a intentar
                 self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);

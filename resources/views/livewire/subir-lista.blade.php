@@ -113,7 +113,7 @@
 
     @if($preview)
     @php
-        $campos = ['col_barcode' => 'Código de barras', 'col_codigo' => 'Código proveedor', 'col_nombre' => 'Descripción', 'col_precio' => 'Precio'];
+        $campos = ['col_barcode' => 'Código de barras', 'col_codigo' => 'Código proveedor', 'col_nombre' => 'Descripción', 'col_precio' => 'Precio', 'col_cantidad' => 'Cantidad (ingreso)'];
         $mapaCols = [];
         foreach ($campos as $k => $lbl) {
             if (($columnas[$k] ?? '') !== '' && $columnas[$k] !== null) $mapaCols[(int) $columnas[$k]] = $k;
@@ -132,7 +132,7 @@
             </div>
         </div>
         <div class="card-body space-y-5">
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div class="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
                 @foreach($campos as $campo => $label)
                     <label class="block">
                         <span class="label">{{ $label }}</span>

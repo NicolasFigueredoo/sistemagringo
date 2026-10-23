@@ -1,6 +1,7 @@
 @php
     $m = fn($v) => $v === null ? '—' : '$ ' . number_format((float) $v, 2, ',', '.');
     $pct = fn($v) => rtrim(rtrim(number_format((float) $v, 2, ',', ''), '0'), ',');
+    $cant = fn($v) => rtrim(rtrim(number_format((float) $v, 3, ',', '.'), '0'), ',');
     $estilos = [
         'verde'    => ['badge-green',  'bg-emerald-500', 'Encontrado'],
         'amarillo' => ['badge-yellow', 'bg-amber-500',   'Confirmar'],
@@ -161,6 +162,7 @@
                     <th class="!text-right">Costo</th>
                     <th class="!text-center">Ganancia</th>
                     <th class="!text-right">Precio de venta</th>
+                    @unless($carga->es_ajuste)<th class="!text-center">Ingresa</th>@endunless
                 </tr>
             </thead>
             <tbody>
@@ -249,9 +251,27 @@
                         </div>
                         @if($it->precio_manual)<div class="mt-0.5 text-[11px] text-brand-600">Editado a mano</div>@endif
                     </td>
+
+                    @unless($carga->es_ajuste)
+                    <td class="text-center">
+                        @if($it->odoo_product_id)
+                            @if($it->stock_anterior !== null)
+                                <div class="text-xs text-slate-400">Hay {{ $cant($it->stock_anterior) }}</div>
+                            @endif
+                            <input type="text" inputmode="decimal" placeholder="—" value="{{ $it->cantidad !== null ? $cant($it->cantidad) : '' }}" @disabled(!$editable)
+                                   wire:change="cambiarCantidad({{ $it->id }}, $event.target.value)"
+                                   class="input mx-auto w-20 text-center {{ (float) $it->cantidad > 0 ? '!border-brand-500 bg-brand-50' : '' }}">
+                            @if((float) $it->cantidad > 0 && $it->stock_anterior !== null)
+                                <div class="mt-0.5 text-[11px] {{ $it->stock_aplicado ? 'font-semibold text-emerald-600' : 'text-brand-600' }}">
+                                    {{ $it->stock_aplicado ? 'Sumado' : 'Queda ' . $cant((float) $it->stock_anterior + (float) $it->cantidad) }}
+                                </div>
+                            @endif
+                        @endif
+                    </td>
+                    @endunless
                 </tr>
             @empty
-                <tr><td colspan="6" class="!py-12 text-center text-sm text-slate-500">No hay productos en este filtro.</td></tr>
+                <tr><td colspan="7" class="!py-12 text-center text-sm text-slate-500">No hay productos en este filtro.</td></tr>
             @endforelse
             </tbody>
         </table>
@@ -264,6 +284,7 @@
         <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="text-sm text-slate-600">
                 Se van a actualizar <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
+                @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock. @endif
             </div>
             <button wire:click="aplicar" @disabled($seleccionados === 0)
                     wire:confirm="Vas a actualizar {{ $seleccionados }} productos en Odoo. ¿Confirmás?"

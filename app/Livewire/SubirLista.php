@@ -27,7 +27,7 @@ class SubirLista extends Component
     public array $preview = [];
     public int $ncols = 0;
     public int $totalFilas = 0;
-    public array $columnas = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null];
+    public array $columnas = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null, 'col_cantidad' => null];
 
     public $descuento = 0;
     public $margen = 60;
@@ -56,7 +56,7 @@ class SubirLista extends Component
             $this->margen = (float) $p->margen;
             $this->ivaIncluido = (bool) $p->iva_incluido;
             if ($this->preview && $p->col_precio !== null) {
-                $this->columnas = $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio']);
+                $this->columnas = $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio', 'col_cantidad']);
             }
         }
     }
@@ -85,7 +85,7 @@ class SubirLista extends Component
 
         $p = Proveedor::find($this->proveedorId);
         $this->columnas = ($p && $p->col_precio !== null)
-            ? $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio'])
+            ? $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio', 'col_cantidad'])
             : LectorLista::detectarColumnas($filas);
     }
 
