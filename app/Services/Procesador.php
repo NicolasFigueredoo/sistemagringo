@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Models\Carga;
 use App\Models\CargaItem;
 use App\Models\Categoria;
+use App\Models\CodigoProveedor;
 use App\Models\Mapeo;
 use App\Models\OdooProducto;
 use App\Models\Proveedor;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -42,7 +44,7 @@ class Procesador
             $rows = $this->odoo->searchRead(
                 'product.product',
                 [['active', '=', true]],
-                ['id', 'name', 'barcode', 'default_code', 'standard_price', 'list_price', 'categ_id'],
+                ['id', 'name', 'barcode', 'default_code', 'standard_price', 'list_price', 'categ_id', 'product_tmpl_id'],
                 $offset,
                 $lote
             );
@@ -59,13 +61,16 @@ class Procesador
                     'costo'        => $p['standard_price'] ?? 0,
                     'precio'       => $p['list_price'] ?? 0,
                     'categ_id'     => is_array($p['categ_id']) ? $p['categ_id'][0] : null,   // many2one = [id, nombre]
+                    'product_tmpl_id' => is_array($p['product_tmpl_id'] ?? null) ? $p['product_tmpl_id'][0] : null,
                     'created_at'   => $ahora,
                     'updated_at'   => $ahora,
                 ];
             }
-            foreach (array_chunk($datos, 500) as $chunk) {
-                OdooProducto::upsert($chunk, ['id'], ['nombre', 'nombre_norm', 'barcode', 'default_code', 'costo', 'precio', 'categ_id', 'updated_at']);
-            }
+            DB::transaction(function () use ($datos) {
+                foreach (array_chunk($datos, 500) as $chunk) {
+                    OdooProducto::upsert($chunk, ['id'], ['nombre', 'nombre_norm', 'barcode', 'default_code', 'costo', 'precio', 'categ_id', 'product_tmpl_id', 'updated_at']);
+                }
+            });
 
             $total += count($rows);
             $offset += $lote;
@@ -76,38 +81,110 @@ class Procesador
             OdooProducto::whereNotIn('id', $vistos)->delete();
         }
 
+        // los proveedores y sus códigos no deben frenar la sincronización del catálogo
         try {
             $this->sincronizarProveedores();
         } catch (\Throwable) {
-            // los proveedores no deben frenar la sincronización del catálogo
+        }
+        try {
+            $this->sincronizarCodigosProveedor();
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return $total;
     }
 
-    /** Trae los proveedores de Odoo (una sola consulta) y agrega los que falten. Devuelve cuántos agregó. */
+    /** Trae los proveedores de Odoo (una sola consulta), agrega los que falten y los vincula con su contacto. Devuelve cuántos agregó. */
     public function sincronizarProveedores(): int
     {
         $partners = $this->odoo->searchRead(
             'res.partner',
             [['supplier_rank', '>', 0], ['active', '=', true], ['parent_id', '=', false]],
-            ['name']
+            ['id', 'name']
         );
 
-        $existentes = Proveedor::pluck('nombre')->map(fn ($n) => mb_strtolower(trim($n)))->flip();
+        $existentes = Proveedor::get(['id', 'nombre', 'odoo_partner_id'])->keyBy(fn ($p) => mb_strtolower(trim($p->nombre)));
         $ahora = now();
         $nuevos = [];
-        foreach ($partners as $p) {
-            $nombre = trim((string) ($p['name'] ?? ''));
-            $clave = mb_strtolower($nombre);
-            if ($nombre === '' || isset($existentes[$clave])) continue;
-            $existentes[$clave] = true;
-            $nuevos[] = ['nombre' => mb_substr($nombre, 0, 250), 'created_at' => $ahora, 'updated_at' => $ahora];
-        }
-        foreach (array_chunk($nuevos, 500) as $chunk) {
-            Proveedor::insert($chunk);
-        }
+        DB::transaction(function () use ($partners, $existentes, $ahora, &$nuevos) {
+            foreach ($partners as $p) {
+                $nombre = trim((string) ($p['name'] ?? ''));
+                $clave = mb_strtolower($nombre);
+                if ($nombre === '') continue;
+                if ($existentes->has($clave)) {
+                    $prov = $existentes[$clave];
+                    if ($prov && $prov->odoo_partner_id === null) $prov->update(['odoo_partner_id' => $p['id']]);
+                    continue;
+                }
+                $existentes[$clave] = false;
+                $nuevos[] = ['nombre' => mb_substr($nombre, 0, 250), 'odoo_partner_id' => $p['id'], 'created_at' => $ahora, 'updated_at' => $ahora];
+            }
+            foreach (array_chunk($nuevos, 500) as $chunk) {
+                Proveedor::insert($chunk);
+            }
+        });
         return count($nuevos);
+    }
+
+    /** Baja los códigos que usa cada proveedor para cada producto (pestaña Compra del producto en Odoo). */
+    public function sincronizarCodigosProveedor(): int
+    {
+        // un código cargado en la plantilla vale para todas sus variantes
+        $variantes = OdooProducto::whereNotNull('product_tmpl_id')->get(['id', 'product_tmpl_id'])
+            ->groupBy('product_tmpl_id')->map(fn ($g) => $g->pluck('id')->all());
+
+        $filas = [];
+        $offset = 0;
+        $lote = 5000;
+        do {
+            $rows = $this->odoo->searchRead(
+                'product.supplierinfo',
+                [['product_code', '!=', false]],
+                ['partner_id', 'product_code', 'product_id', 'product_tmpl_id'],
+                $offset,
+                $lote
+            );
+            foreach ($rows as $r) {
+                $codigo = Matcher::codigoClave($r['product_code'] ?: null);
+                if (!$codigo || !is_array($r['partner_id'])) continue;
+                $ids = is_array($r['product_id']) ? [$r['product_id'][0]]
+                    : (is_array($r['product_tmpl_id']) ? ($variantes[$r['product_tmpl_id'][0]] ?? []) : []);
+                foreach ($ids as $id) {
+                    $filas[] = ['partner_id' => $r['partner_id'][0], 'codigo' => mb_substr($codigo, 0, 250), 'product_id' => $id];
+                }
+            }
+            $offset += $lote;
+        } while (count($rows) === $lote);
+
+        DB::transaction(function () use ($filas) {
+            CodigoProveedor::query()->delete();
+            foreach (array_chunk($filas, 500) as $chunk) {
+                CodigoProveedor::insert($chunk);
+            }
+        });
+        return count($filas);
+    }
+
+    /** Posibles códigos de un renglón fuera de las columnas elegidas: otras columnas y el principio de la descripción. */
+    private static function codigosExtra(array $fila, array $columnas, ?string $nombre): array
+    {
+        $usadas = array_filter([$columnas['col_barcode'], $columnas['col_codigo'], $columnas['col_nombre'], $columnas['col_precio']], fn ($c) => $c !== null);
+        $out = [];
+        foreach ($fila as $i => $v) {
+            $v = trim((string) $v);
+            if (in_array($i, $usadas) || mb_strlen($v) < 3 || mb_strlen($v) > 30 || !preg_match('/\d/', $v)) continue;
+            // cantidades y precios ("1", "12", "1.500,00") no son códigos
+            if (preg_match('/^\d{1,3}([.,]\d{3})*([.,]\d{1,2})?$/', $v)) continue;
+            if (preg_match('/^[\pL\d][\pL\d.\/ _-]*$/u', $v)) $out[] = $v;
+        }
+        // "ABC-12  45678 DESCRIPCION": el segundo código queda pegado a la descripción
+        $palabras = preg_split('/\s+/', trim((string) $nombre));
+        for ($n = 1; $n <= min(3, count($palabras) - 1); $n++) {
+            $pre = implode(' ', array_slice($palabras, 0, $n));
+            if (preg_match('/\d/', $pre)) $out[] = $pre;
+        }
+        return $out;
     }
 
     /**
@@ -120,9 +197,15 @@ class Procesador
         $filas = LectorLista::leer($ruta, $ext);
 
         $mapeos = Mapeo::where('proveedor_id', $prov->id)->pluck('odoo_product_id', 'clave')->all();
+        // códigos del proveedor en Odoo; si no se sabe qué contacto de Odoo es, los de todos (hay que confirmarlos)
+        $codigosProv = CodigoProveedor::query()->select('codigo', 'product_id')
+            ->when($prov->odoo_partner_id, fn ($q) => $q->where('partner_id', $prov->odoo_partner_id))
+            ->toBase()->get();
         $matcher = new Matcher(
-            OdooProducto::query()->select('id', 'nombre', 'barcode', 'default_code')->cursor()->map(fn ($p) => $p->toArray()),
-            $mapeos
+            OdooProducto::query()->select('id', 'nombre', 'barcode', 'default_code')->toBase()->cursor(),
+            $mapeos,
+            $codigosProv,
+            (bool) $prov->odoo_partner_id
         );
 
         $carga = DB::transaction(function () use ($prov, $filas, $columnas, $opciones, $matcher, $nombreArchivo) {
@@ -148,7 +231,7 @@ class Procesador
                 if (!$precio || $precio <= 0) continue;            // títulos, subtotales, etc.
                 if (!$barcode && !$codigo && !$nombre) continue;
 
-                $m = $matcher->buscar($barcode, $codigo, $nombre);
+                $m = $matcher->buscar($barcode, $codigo, $nombre, self::codigosExtra($f, $columnas, $nombre));
 
                 $items[] = [
                     'carga_id'        => $carga->id,
@@ -166,7 +249,7 @@ class Procesador
                     'odoo_nombre'     => $m['odoo_nombre'],
                     'margen'          => (float) $prov->margen,
                     'precio_nuevo'    => 0,
-                    'seleccionado'    => in_array($m['match'], ['barcode', 'mapeo'], true),
+                    'seleccionado'    => in_array($m['match'], ['barcode', 'mapeo', 'codigo'], true),
                     'created_at'      => now(),
                     'updated_at'      => now(),
                 ];
@@ -185,19 +268,19 @@ class Procesador
     }
 
     /**
-     * Arma una carga para revisar con todos los productos de la categoría:
-     * precio de venta = costo actual en Odoo + ganancia de la categoría (+ IVA, redondeo).
+     * Arma una carga para revisar con los productos de la categoría (o de todas las que tienen ganancia, si $cat es null):
+     * precio de venta = costo actual en Odoo + ganancia de su categoría. Sin IVA: 1000 de costo con 50% = 1500.
      * Los productos sin costo en Odoo se saltean. Devuelve [carga, salteados].
      */
-    public function crearAjusteCategoria(Categoria $cat, bool $sumarIva = true, int $redondeo = 0): array
+    public function crearAjuste(?Categoria $cat = null, bool $sumarIva = false, int $redondeo = 0): array
     {
         @set_time_limit(0);
-        $margen = (float) $cat->margen;
-        $productos = OdooProducto::where('categ_id', $cat->id)->orderBy('nombre')->get(['id', 'nombre', 'barcode', 'default_code']);
+        $margenes = ($cat ? collect([$cat]) : Categoria::whereNotNull('margen')->get())->pluck('margen', 'id');
+        $productos = OdooProducto::whereIn('categ_id', $margenes->keys())->orderBy('nombre')->get(['id', 'nombre', 'barcode', 'default_code', 'categ_id']);
 
         // costo y precio actuales, leídos de Odoo (el catálogo local puede estar viejo)
         $actual = [];
-        foreach ($productos->chunk(500) as $chunk) {
+        foreach ($productos->chunk(2000) as $chunk) {
             foreach ($this->odoo->read('product.product', $chunk->pluck('id')->values()->all(), ['standard_price', 'list_price']) as $a) {
                 $actual[$a['id']] = $a;
             }
@@ -209,6 +292,7 @@ class Procesador
             $a = $actual[$p->id] ?? null;
             $costo = round((float) ($a['standard_price'] ?? 0), 2);
             if (!$a || $costo <= 0) { $salteados++; continue; }   // sin costo: daría precio 0
+            $margen = (float) $margenes[$p->categ_id];
 
             $items[] = [
                 'fila'            => count($items) + 1,
@@ -216,7 +300,7 @@ class Procesador
                 'codigo'          => $p->default_code,
                 'nombre'          => $p->nombre,
                 'precio_lista'    => $costo,
-                'categoria_id'    => $cat->id,
+                'categoria_id'    => $p->categ_id,
                 'descuento'       => 0,
                 'costo_nuevo'     => $costo,
                 'match'           => 'categoria',
@@ -233,11 +317,13 @@ class Procesador
             ];
         }
 
-        $carga = DB::transaction(function () use ($cat, $items, $sumarIva, $redondeo) {
+        $carga = DB::transaction(function () use ($cat, $margenes, $items, $sumarIva, $redondeo) {
             $carga = Carga::create([
                 'proveedor_id' => null,
-                'categoria_id' => $cat->id,
-                'archivo'      => "Ganancia {$cat->margen}% sobre el costo actual",
+                'categoria_id' => $cat?->id,
+                'archivo'      => $cat
+                    ? 'Ganancia ' . ((float) $cat->margen + 0) . '% sobre el costo actual'
+                    : "Ganancia de cada categoría sobre el costo actual ({$margenes->count()} categorías)",
                 'descuento'    => 0,
                 'iva_incluido' => false,
                 'sumar_iva'    => $sumarIva,
@@ -302,16 +388,21 @@ class Procesador
     {
         $q = $carga->items()->whereNotNull('odoo_product_id');
         if ($soloItemIds) $q->whereIn('id', $soloItemIds);
-        $items = $q->get();
+        $this->refrescarAnteriores($q->get());
+    }
 
-        foreach ($items->chunk(500) as $chunk) {
+    private function refrescarAnteriores(Collection $items): void
+    {
+        foreach ($items->chunk(2000) as $chunk) {
             $ids = $chunk->pluck('odoo_product_id')->unique()->values()->all();
             $actual = collect($this->odoo->read('product.product', $ids, ['standard_price', 'list_price']))->keyBy('id');
-            foreach ($chunk as $it) {
-                if ($a = $actual->get($it->odoo_product_id)) {
-                    $it->update(['costo_anterior' => $a['standard_price'], 'precio_anterior' => $a['list_price']]);
+            DB::transaction(function () use ($chunk, $actual) {
+                foreach ($chunk as $it) {
+                    if ($a = $actual->get($it->odoo_product_id)) {
+                        $it->update(['costo_anterior' => $a['standard_price'], 'precio_anterior' => $a['list_price']]);
+                    }
                 }
-            }
+            });
         }
     }
 
@@ -332,24 +423,26 @@ class Procesador
     /** % masivo / IVA / redondeo. Con $margenMasivo pisa todo (también categorías y precios a mano). */
     public function recalcular(Carga $carga, ?float $margenMasivo = null): void
     {
-        if ($margenMasivo === null) {
-            // cambió el IVA o el redondeo: rehacer la cuenta con el % que ya tiene cada fila
-            foreach ($carga->items()->get() as $it) {
-                if ($it->precio_manual) {
-                    $it->update(['margen' => Precios::margenDesdePrecio((float) $it->costo_nuevo, (float) $it->precio_nuevo, $carga->sumar_iva)]);
-                } else {
-                    $it->update(['precio_nuevo' => Precios::venta((float) $it->costo_nuevo, (float) $it->margen, $carga->sumar_iva, $carga->redondeo)]);
+        DB::transaction(function () use ($carga, $margenMasivo) {
+            if ($margenMasivo === null) {
+                // cambió el IVA o el redondeo: rehacer la cuenta con el % que ya tiene cada fila
+                foreach ($carga->items()->get() as $it) {
+                    if ($it->precio_manual) {
+                        $it->update(['margen' => Precios::margenDesdePrecio((float) $it->costo_nuevo, (float) $it->precio_nuevo, $carga->sumar_iva)]);
+                    } else {
+                        $it->update(['precio_nuevo' => Precios::venta((float) $it->costo_nuevo, (float) $it->margen, $carga->sumar_iva, $carga->redondeo)]);
+                    }
                 }
+                return;
             }
-            return;
-        }
-        $carga->items()->update(['precio_manual' => false]);
-        foreach ($carga->items()->get() as $it) {
-            $it->update([
-                'margen'       => $margenMasivo,
-                'precio_nuevo' => Precios::venta((float) $it->costo_nuevo, $margenMasivo, $carga->sumar_iva, $carga->redondeo),
-            ]);
-        }
+            $carga->items()->update(['precio_manual' => false]);
+            foreach ($carga->items()->get() as $it) {
+                $it->update([
+                    'margen'       => $margenMasivo,
+                    'precio_nuevo' => Precios::venta((float) $it->costo_nuevo, $margenMasivo, $carga->sumar_iva, $carga->redondeo),
+                ]);
+            }
+        });
     }
 
     /**
@@ -362,21 +455,22 @@ class Procesador
             Categoria::where('id', $categoriaId)->update(['margen' => $margen, 'descuento' => $descuento]);
         }
 
-        $n = 0;
-        foreach ($carga->items()->where('categoria_id', $categoriaId)->get() as $it) {
-            $desc = $descuento ?? (float) $it->descuento;
-            $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido);
-            $m = $margen ?? (float) $it->margen;
-            $it->update([
-                'descuento'     => $desc,
-                'costo_nuevo'   => $costo,
-                'margen'        => $m,
-                'precio_nuevo'  => Precios::venta($costo, $m, $carga->sumar_iva, $carga->redondeo),
-                'precio_manual' => false,
-            ]);
-            $n++;
-        }
-        return $n;
+        $items = $carga->items()->where('categoria_id', $categoriaId)->get();
+        DB::transaction(function () use ($carga, $items, $margen, $descuento) {
+            foreach ($items as $it) {
+                $desc = $descuento ?? (float) $it->descuento;
+                $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido);
+                $m = $margen ?? (float) $it->margen;
+                $it->update([
+                    'descuento'     => $desc,
+                    'costo_nuevo'   => $costo,
+                    'margen'        => $m,
+                    'precio_nuevo'  => Precios::venta($costo, $m, $carga->sumar_iva, $carga->redondeo),
+                    'precio_manual' => false,
+                ]);
+            }
+        });
+        return $items->count();
     }
 
     public function cambiarMargen(CargaItem $it, float $margen): void
@@ -405,16 +499,22 @@ class Procesador
         $items = $carga->items()->where('seleccionado', true)->where('aplicado', false)->whereNotNull('odoo_product_id')->get();
 
         // refrescar "anterior" justo antes de escribir, para que Deshacer sea exacto
-        $this->traerPreciosActuales($carga, $items->pluck('id')->all());
-        $items = $items->fresh();
+        $this->refrescarAnteriores($items);
 
-        $ok = 0; $errores = 0;
-        foreach ($items as $it) {
-            try {
-                $campos = $this->camposOdoo($carga, $it->costo_nuevo, $it->precio_nuevo);
-                $this->odoo->write('product.product', [$it->odoo_product_id], $campos);
+        $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_nuevo, $it->precio_nuevo)])->all();
+        // los que en Odoo ya tienen esos valores no hace falta escribirlos
+        $aEscribir = $items->reject(fn ($it) => self::igual($it->precio_anterior, $campos[$it->id]['list_price'])
+            && (!isset($campos[$it->id]['standard_price']) || self::igual($it->costo_anterior, $campos[$it->id]['standard_price'])));
+        $errores = $this->escribir($aEscribir, $campos);
+
+        DB::transaction(function () use ($carga, $items, $campos, $errores) {
+            foreach ($items as $it) {
+                if (isset($errores[$it->id])) {
+                    $it->update(['error' => mb_substr($errores[$it->id], 0, 250)]);
+                    continue;
+                }
                 $it->update(['aplicado' => true, 'error' => null]);
-                OdooProducto::where('id', $it->odoo_product_id)->update(array_filter(['costo' => $campos['standard_price'] ?? null, 'precio' => $campos['list_price']], fn ($v) => $v !== null));
+                self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
 
                 // si lo confirmó una persona, recordarlo para la próxima
                 if (in_array($it->match, ['manual', 'nombre'], true)) {
@@ -425,31 +525,66 @@ class Procesador
                         );
                     }
                 }
-                $ok++;
-            } catch (\Throwable $e) {
-                $it->update(['error' => mb_substr($e->getMessage(), 0, 250)]);
-                $errores++;
             }
-        }
+            $carga->update(['estado' => 'aplicada', 'aplicada_at' => now()]);
+        });
 
-        $carga->update(['estado' => 'aplicada', 'aplicada_at' => now()]);
-        return [$ok, $errores];
+        return [$items->count() - count($errores), count($errores)];
     }
 
     /** Vuelve a poner en Odoo los precios que había antes de esta carga. */
     public function deshacer(Carga $carga): int
     {
         @set_time_limit(0);
-        $n = 0;
-        foreach ($carga->items()->where('aplicado', true)->get() as $it) {
-            if ($it->costo_anterior === null || $it->precio_anterior === null) continue;
-            $campos = $this->camposOdoo($carga, $it->costo_anterior, $it->precio_anterior);
-            $this->odoo->write('product.product', [$it->odoo_product_id], $campos);
-            OdooProducto::where('id', $it->odoo_product_id)->update(array_filter(['costo' => $campos['standard_price'] ?? null, 'precio' => $campos['list_price']], fn ($v) => $v !== null));
-            $it->update(['aplicado' => false]);
-            $n++;
+        $items = $carga->items()->where('aplicado', true)->whereNotNull('costo_anterior')->whereNotNull('precio_anterior')->get();
+        $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_anterior, $it->precio_anterior)])->all();
+        $errores = $this->escribir($items, $campos);
+
+        DB::transaction(function () use ($carga, $items, $campos, $errores) {
+            foreach ($items as $it) {
+                if (isset($errores[$it->id])) continue;   // sigue aplicado: se puede volver a intentar
+                self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
+                $it->update(['aplicado' => false]);
+            }
+            if (!$errores) $carga->update(['estado' => 'deshecha', 'deshecha_at' => now()]);
+        });
+        if ($errores) {
+            throw new \RuntimeException(count($errores) . ' productos no se pudieron volver atrás (tocá Deshacer de nuevo): ' . reset($errores));
         }
-        $carga->update(['estado' => 'deshecha', 'deshecha_at' => now()]);
-        return $n;
+        return $items->count();
+    }
+
+    /**
+     * Escribe en Odoo varios productos a la vez: junta los que llevan los mismos valores en un solo pedido
+     * y manda varios pedidos en paralelo. Devuelve [item_id => mensaje de error].
+     * @param array<int,array> $campos item_id => valores a escribir
+     */
+    private function escribir(Collection $items, array $campos): array
+    {
+        $grupos = $items->groupBy(fn ($it) => json_encode($campos[$it->id]))->values();
+        $fallas = $this->odoo->writeMany('product.product', $grupos->map(fn ($g) => [
+            $g->pluck('odoo_product_id')->unique()->values()->all(), $campos[$g->first()->id],
+        ])->all());
+
+        // Odoo rechaza el grupo entero si falla uno: esos se reintentan de a uno
+        $sueltos = collect(array_keys($fallas))->flatMap(fn ($k) => $grupos[$k])->values();
+        $errores = $this->odoo->writeMany('product.product', $sueltos->map(fn ($it) => [[$it->odoo_product_id], $campos[$it->id]])->all());
+
+        $out = [];
+        foreach ($errores as $k => $msg) $out[$sueltos[$k]->id] = $msg;
+        return $out;
+    }
+
+    private static function actualizarLocal(int $productoId, array $campos): void
+    {
+        OdooProducto::where('id', $productoId)->update(array_filter(
+            ['costo' => $campos['standard_price'] ?? null, 'precio' => $campos['list_price']],
+            fn ($v) => $v !== null
+        ));
+    }
+
+    private static function igual($a, $b): bool
+    {
+        return $a !== null && abs((float) $a - (float) $b) < 0.005;
     }
 }

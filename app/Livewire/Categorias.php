@@ -42,7 +42,7 @@ class Categorias extends Component
         if ($cat->margen === null) { $this->error = "Primero poné la ganancia % de \"{$cat->nombre}\"."; return; }
 
         try {
-            [$carga, $salteados] = (new Procesador(OdooClient::desdeConfig()))->crearAjusteCategoria($cat);
+            [$carga, $salteados] = (new Procesador(OdooClient::desdeConfig()))->crearAjuste($cat);
         } catch (\Throwable $e) {
             report($e);
             $this->error = 'No se pudo conectar con Odoo: ' . $e->getMessage();

@@ -3,6 +3,7 @@
 use App\Http\Controllers\LoginController;
 use App\Livewire\Categorias;
 use App\Livewire\Historial;
+use App\Livewire\Reajustar;
 use App\Livewire\RevisarCarga;
 use App\Livewire\SubirLista;
 use Illuminate\Support\Facades\Route;
@@ -19,4 +20,5 @@ Route::middleware('auth')->group(function () {
     Route::get('/carga/{carga}', RevisarCarga::class)->name('revisar');
     Route::get('/categorias', Categorias::class)->name('categorias');
     Route::get('/historial', Historial::class)->name('historial');
+    Route::get('/reajustar', Reajustar::class)->name('reajustar');
 });

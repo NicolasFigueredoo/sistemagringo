@@ -8,9 +8,12 @@ namespace App\Services;
  * Reglas (de más segura a menos):
  *   1. barcode   -> código de barras exacto                  (se aplica solo)
  *   2. mapeo     -> ya se asoció a mano antes                (se aplica solo)
- *   3. nombre    -> nombre idéntico normalizado, único       (hay que tildarlo)
- *   4. parecido  -> hasta 3 candidatos para elegir           (hay que elegir)
- *   5. ninguno
+ *   3. codigo    -> código del proveedor cargado en Odoo, o  (se aplica solo)
+ *                   referencia interna (default_code) única
+ *   4. nombre    -> nombre idéntico normalizado, único       (hay que tildarlo)
+ *                   o código suelto que coincide (descripción, otras columnas, código corto)
+ *   5. parecido  -> hasta 3 candidatos para elegir           (hay que elegir)
+ *   6. ninguno
  *
  * Nunca asocia automáticamente por nombre parecido: "ESCOBA" jamás va solo a "PALO DE ESCOBA".
  * Sin dependencias de Laravel: recibe el catálogo como array.
@@ -21,8 +24,10 @@ class Matcher
 
     /** @var array<string,int> barcode => id */
     private array $porBarcode = [];
-    /** @var array<string,int> default_code => id */
+    /** @var array<string,int[]> codigoClave(default_code o barcode corto) => ids */
     private array $porCodigo = [];
+    /** @var array<string,int[]> codigoClave(código del proveedor en Odoo) => ids */
+    private array $porCodigoProv = [];
     /** @var array<string,int[]> nombre_norm => ids */
     private array $porNombre = [];
     /** @var array<string,int[]> token => ids (índice invertido) */
@@ -33,8 +38,10 @@ class Matcher
     /**
      * @param iterable<array{id:int,nombre:string,barcode:?string,default_code:?string}> $catalogo
      * @param array<string,int> $mapeos clave => odoo_product_id (del proveedor)
+     * @param iterable<array{codigo:string,product_id:int}> $codigosProveedor códigos del proveedor en Odoo
+     * @param bool $proveedorSeguro false = son códigos de cualquier proveedor (no se sabe cuál es en Odoo): hay que confirmar
      */
-    public function __construct(iterable $catalogo, private array $mapeos = [])
+    public function __construct(iterable $catalogo, private array $mapeos = [], iterable $codigosProveedor = [], private bool $proveedorSeguro = true)
     {
         foreach ($catalogo as $p) {
             $p = (array) $p;
@@ -43,17 +50,28 @@ class Matcher
             $tokens = self::tokens($norm);
             $this->productos[$id] = ['id' => $id, 'nombre' => $p['nombre'], 'norm' => $norm, 'tokens' => $tokens];
 
-            if ($b = self::limpiarCodigo($p['barcode'] ?? null)) $this->porBarcode[$b] = $id;
-            if ($c = self::limpiarCodigo($p['default_code'] ?? null)) $this->porCodigo[$c] = $id;
+            if ($b = self::limpiarCodigo($p['barcode'] ?? null)) {
+                $this->porBarcode[$b] = $id;
+                // códigos de barra cortos ("12445") son en realidad códigos internos
+                if (strlen($b) < 8 && ($k = self::codigoClave($b))) $this->porCodigo[$k][] = $id;
+            }
+            if ($k = self::codigoClave($p['default_code'] ?? null)) $this->porCodigo[$k][] = $id;
             $this->porNombre[$norm][] = $id;
             foreach ($tokens as $t) $this->porToken[$t][] = $id;
+        }
+        foreach ($codigosProveedor as $c) {
+            $c = (array) $c;
+            if (isset($this->productos[(int) $c['product_id']]) && ($k = self::codigoClave($c['codigo']))) {
+                $this->porCodigoProv[$k][] = (int) $c['product_id'];
+            }
         }
     }
 
     /**
+     * @param string[] $otrosCodigos posibles códigos sacados de otras columnas o del principio de la descripción
      * @return array{match:string, odoo_product_id:?int, odoo_nombre:?string, candidatos:array}
      */
-    public function buscar(?string $barcode, ?string $codigo, ?string $nombre): array
+    public function buscar(?string $barcode, ?string $codigo, ?string $nombre, array $otrosCodigos = []): array
     {
         $barcode = self::limpiarCodigo($barcode);
         $codigo = self::limpiarCodigo($codigo);
@@ -73,22 +91,34 @@ class Matcher
             }
         }
 
-        // 2b. código interno idéntico (default_code) -> lo tratamos como "nombre": hay que confirmarlo
-        if ($codigo && isset($this->porCodigo[$codigo])) {
-            return $this->resultado('nombre', $this->porCodigo[$codigo]);
+        // 3. código del proveedor / referencia interna de Odoo (sin importar guiones, espacios ni ceros adelante)
+        $principales = array_values(array_unique(array_filter(array_map(self::codigoClave(...), [$codigo, $barcode]))));
+        $otros = array_values(array_diff(array_unique(array_filter(array_map(self::codigoClave(...), $otrosCodigos))), $principales));
+
+        foreach ($principales as $k) {
+            if ($id = self::unico($this->porCodigoProv[$k] ?? [])) return $this->resultado($this->proveedorSeguro ? 'codigo' : 'nombre', $id);
+        }
+        foreach ($principales as $k) {
+            // un código corto ("100") puede ser casualidad: se confirma a mano
+            if ($id = self::unico($this->porCodigo[$k] ?? [])) return $this->resultado(self::codigoFuerte($k) ? 'codigo' : 'nombre', $id);
+        }
+        foreach ($otros as $k) {
+            if (!self::codigoFuerte($k)) continue;
+            $id = self::unico($this->porCodigoProv[$k] ?? []) ?? self::unico($this->porCodigo[$k] ?? []);
+            if ($id) return $this->resultado('nombre', $id);
         }
 
         if ($norm === '') {
             return ['match' => 'ninguno', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => []];
         }
 
-        // 3. nombre idéntico y único
+        // 4. nombre idéntico y único
         $ids = $this->porNombre[$norm] ?? [];
         if (count($ids) === 1) {
             return $this->resultado('nombre', $ids[0]);
         }
 
-        // 4. parecidos
+        // 5. parecidos
         $candidatos = $this->parecidos($norm, 3);
         if ($candidatos) {
             return ['match' => 'parecido', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => $candidatos];
@@ -163,6 +193,33 @@ class Matcher
             $out[$t] = true;
         }
         return array_map('strval', array_keys($out));   // array_keys convierte "18" en int
+    }
+
+    /**
+     * Código comparable: solo letras y números en mayúscula, sin ceros adelante si es todo número.
+     * "LS-9" = "ls 9" = "LS9" ; "022014" = "22014" ; "ABC.990" = "abc-990"
+     */
+    public static function codigoClave(?string $c): ?string
+    {
+        if ($c === null) return null;
+        $c = strtoupper(trim($c));
+        if (preg_match('/^\d+\.0+$/', $c)) $c = preg_replace('/\.0+$/', '', $c);   // Excel: "12345.0"
+        $c = preg_replace('/[^A-Z0-9]/', '', $c);
+        if (ctype_digit($c)) $c = ltrim($c, '0');
+        return $c === '' ? null : $c;
+    }
+
+    /** Código con suficiente información para no coincidir por casualidad: tiene letras o 4+ dígitos. */
+    private static function codigoFuerte(string $k): bool
+    {
+        return preg_match('/[A-Z]/', $k) || strlen($k) >= 4;
+    }
+
+    /** El id si hay uno solo (el mismo código en dos productos no sirve para decidir). */
+    private static function unico(array $ids): ?int
+    {
+        $ids = array_unique($ids);
+        return count($ids) === 1 ? (int) reset($ids) : null;
     }
 
     private static function limpiarCodigo(?string $c): ?string

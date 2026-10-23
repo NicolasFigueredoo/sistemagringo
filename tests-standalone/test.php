@@ -60,6 +60,36 @@ ok($r['match'] === 'ninguno', "sin nada parecido -> gris");
 $r = $mt->buscar('7790001000024.0', null, null);
 ok($r['match'] === 'barcode', "EAN con '.0' de Excel también matchea");
 
+echo "Por código:\n";
+$catCod = [
+    ['id' => 10, 'nombre' => 'disco 9 diamantado aliafor',     'barcode' => null,    'default_code' => 'LS-9'],
+    ['id' => 11, 'nombre' => 'PINZA 6 BULIT',                  'barcode' => null,    'default_code' => 'PZA P10 PS6'],
+    ['id' => 12, 'nombre' => 'alambre galv 16',                'barcode' => null,    'default_code' => '022014'],
+    ['id' => 13, 'nombre' => 'pasador doble 100',              'barcode' => '12445', 'default_code' => null],
+    ['id' => 14, 'nombre' => 'TUERCA 100',                     'barcode' => null,    'default_code' => '100'],
+    ['id' => 15, 'nombre' => 'MECHA WIDIA 8MM',                'barcode' => null,    'default_code' => 'MW-8'],
+];
+$mc = new Matcher($catCod, [], [['codigo' => 'ABC.990', 'product_id' => 15]]);
+$r = $mc->buscar(null, 'ls 9', 'Láser General 9"');
+ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 10, "referencia interna sin guión ('ls 9' = 'LS-9') -> verde");
+$r = $mc->buscar(null, 'PZA-P10-PS6', 'PINZA');
+ok($r['odoo_product_id'] === 11, "referencia con espacios en Odoo y guiones en la lista");
+$r = $mc->buscar(null, '22014', 'ALAMBRE');
+ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 12, "ceros adelante no importan (22014 = 022014)");
+$r = $mc->buscar(null, '12445', 'PASADOR');
+ok($r['odoo_product_id'] === 13, "código cargado en el código de barras corto de Odoo");
+$r = $mc->buscar(null, '100', 'TUERCA');
+ok($r['match'] === 'nombre' && $r['odoo_product_id'] === 14, "código corto ('100') -> hay que confirmarlo");
+$r = $mc->buscar(null, 'abc-990', 'MECHA');
+ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 15, "código del proveedor cargado en Odoo -> verde");
+$r = $mc->buscar(null, 'XX-1', 'MW-8 MECHA WIDIA', ['MW-8']);
+ok($r['match'] === 'nombre' && $r['odoo_product_id'] === 15, "segundo código pegado a la descripción -> amarillo");
+$r = (new Matcher($catCod, [], [['codigo' => 'ABC.990', 'product_id' => 15]], false))->buscar(null, 'ABC990', 'MECHA');
+ok($r['match'] === 'nombre', "código de proveedor sin saber cuál es el proveedor en Odoo -> confirmar");
+
+echo "Reajuste sin IVA:\n";
+$v4 = Precios::venta(1000, 50, false);          ok($v4 == 1500.0, "costo 1000 + 50% = $v4");
+
 echo "PDF:\n";
 $filas = LectorLista::leer(__DIR__ . '/lista_prueba.pdf');
 foreach ($filas as $f) echo "     " . json_encode($f, JSON_UNESCAPED_UNICODE) . "\n";

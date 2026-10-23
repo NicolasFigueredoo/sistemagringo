@@ -11,6 +11,7 @@
             ['subir', 'Cargar lista', 'upload', ['subir', 'revisar']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
+            ['reajustar', 'Reajustar', 'zap', ['reajustar']],
         ];
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">

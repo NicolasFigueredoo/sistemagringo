@@ -18,16 +18,18 @@ class Carga extends Model
     public function items() { return $this->hasMany(CargaItem::class); }
     public function categoria() { return $this->belongsTo(Categoria::class); }
 
-    /** Ajuste de categoría: recalcula la venta desde el costo actual, no viene de una lista de proveedor */
+    /** Ajuste (de una categoría o general): recalcula la venta desde el costo actual, no viene de una lista de proveedor */
     public function getEsAjusteAttribute(): bool
     {
-        return $this->categoria_id !== null;
+        return $this->proveedor_id === null;
     }
 
     public function getTituloAttribute(): string
     {
-        return $this->es_ajuste
-            ? 'Ajuste de categoría: ' . ($this->categoria?->nombre ?? '—')
-            : ($this->proveedor?->nombre ?? '—');
+        return match (true) {
+            $this->categoria_id !== null => 'Ajuste de categoría: ' . ($this->categoria?->nombre ?? '—'),
+            $this->es_ajuste             => 'Reajuste general',
+            default                      => $this->proveedor?->nombre ?? '—',
+        };
     }
 }

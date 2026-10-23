@@ -66,7 +66,7 @@
                         <td class="!align-middle text-right">
                             @if($c->margen !== null && ($conteo[$c->id] ?? 0) > 0)
                                 <button wire:click="ajustar({{ $c->id }})"
-                                        title="Recalcula el precio de venta de todos sus productos: costo actual + {{ $pct($c->margen) }}% + IVA. Lo revisás antes de enviarlo a Odoo."
+                                        title="Recalcula el precio de venta de todos sus productos: costo actual + {{ $pct($c->margen) }}% (sin IVA). Lo revisás antes de enviarlo a Odoo."
                                         class="btn-secondary px-3 py-1.5 text-xs">
                                     <x-icon name="zap" class="h-3.5 w-3.5" /> Ajustar a {{ $pct($c->margen) }}%
                                 </button>

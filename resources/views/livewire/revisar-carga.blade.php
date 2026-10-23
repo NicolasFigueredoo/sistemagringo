@@ -71,10 +71,12 @@
                             class="btn-secondary">Aplicar a todos</button>
                 </div>
             </div>
+            @unless($carga->es_ajuste)
             <label class="flex items-center gap-2 pb-2 text-sm font-medium text-slate-700">
                 <input wire:model.live="sumarIva" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
                 Sumar IVA (21%)
             </label>
+            @endunless
         </div>
 
         @if($categorias->count())
@@ -154,7 +156,7 @@
                             </div>
                         @endif
                     </th>
-                    <th>Lista del proveedor</th>
+                    <th>{{ $carga->es_ajuste ? 'Producto' : 'Lista del proveedor' }}</th>
                     <th>Producto en Odoo</th>
                     <th class="!text-right">Costo</th>
                     <th class="!text-center">Ganancia</th>

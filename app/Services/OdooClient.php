@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -27,15 +28,24 @@ class OdooClient
         return new self(config('odoo.url'), config('odoo.db'), config('odoo.user'), config('odoo.api_key'));
     }
 
-    private function rpc(string $service, string $method, array $args): mixed
+    private function payload(string $service, string $method, array $args): array
     {
-        $r = Http::timeout(120)->retry(2, 1000)->post($this->url . '/jsonrpc', [
+        return [
             'jsonrpc' => '2.0',
             'method'  => 'call',
             'params'  => ['service' => $service, 'method' => $method, 'args' => $args],
             'id'      => random_int(1, 999999),
-        ])->throw()->json();
+        ];
+    }
 
+    private function rpc(string $service, string $method, array $args): mixed
+    {
+        $r = Http::timeout(120)->retry(2, 1000)->post($this->url . '/jsonrpc', $this->payload($service, $method, $args))->throw()->json();
+        return $this->resultado($r);
+    }
+
+    private function resultado(?array $r): mixed
+    {
         if (isset($r['error'])) {
             $msg = $r['error']['data']['message'] ?? $r['error']['message'] ?? 'Error de Odoo';
             throw new RuntimeException('Odoo: ' . $msg);
@@ -77,5 +87,35 @@ class OdooClient
     public function write(string $model, array $ids, array $valores): bool
     {
         return (bool) $this->call($model, 'write', [array_values($ids), $valores]);
+    }
+
+    /**
+     * Muchos write a la vez, de a $paralelo pedidos simultáneos (uno por uno tarda minutos).
+     * @param array<int|string,array{0:int[],1:array}> $escrituras clave => [ids, valores]
+     * @return array<int|string,string> clave => mensaje, solo las que fallaron
+     */
+    public function writeMany(string $model, array $escrituras, int $paralelo = 6): array
+    {
+        $uid = $this->uid();
+        $errores = [];
+        foreach (array_chunk($escrituras, $paralelo, true) as $lote) {
+            $resp = Http::pool(fn (Pool $pool) => array_map(
+                fn ($k) => $pool->as((string) $k)->timeout(120)->post($this->url . '/jsonrpc', $this->payload('object', 'execute_kw', [
+                    $this->db, $uid, $this->apiKey, $model, 'write', [array_values($lote[$k][0]), $lote[$k][1]], (object) [],
+                ])),
+                array_keys($lote)
+            ));
+            foreach (array_keys($lote) as $k) {
+                try {
+                    $r = $resp[(string) $k] ?? null;
+                    if ($r instanceof \Throwable) throw $r;
+                    if (!$r) throw new RuntimeException('Sin respuesta de Odoo');
+                    $this->resultado($r->throw()->json());
+                } catch (\Throwable $e) {
+                    $errores[$k] = $e->getMessage();
+                }
+            }
+        }
+        return $errores;
     }
 }

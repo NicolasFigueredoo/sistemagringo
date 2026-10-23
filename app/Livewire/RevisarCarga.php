@@ -21,6 +21,8 @@ class RevisarCarga extends Component
 {
     use WithPagination;
 
+    private const VERDES = ['barcode', 'mapeo', 'codigo', 'manual', 'categoria'];
+
     public Carga $carga;
     public string $filtro = 'todos';     // todos (sin los grises) | verde | amarillo | naranja | gris | rojo
     public $categoriaFiltro = '';         // id de categoría para filtrar la tabla
@@ -183,7 +185,7 @@ class RevisarCarga extends Component
             $q->where('categoria_id', (int) $this->categoriaFiltro);
         }
         return match ($this->filtro) {
-            'verde'    => $q->whereIn('match', ['barcode', 'mapeo', 'manual', 'categoria']),
+            'verde'    => $q->whereIn('match', self::VERDES),
             'amarillo' => $q->where('match', 'nombre'),
             'naranja'  => $q->where('match', 'parecido'),
             'gris'     => $q->where('match', 'ninguno'),
@@ -202,9 +204,12 @@ class RevisarCarga extends Component
         if (preg_match('/^\d{6,14}$/', $txt)) {
             $q->where('barcode', $txt)->orWhere('default_code', $txt);
         } else {
-            foreach (Matcher::tokens(Matcher::normalizar($txt)) as $t) {
-                $q->where('nombre_norm', 'like', '%' . $t . '%');
-            }
+            // por nombre, o por la referencia interna tal cual ("LS-9")
+            $q->where(function ($w) use ($txt) {
+                foreach (Matcher::tokens(Matcher::normalizar($txt)) as $t) {
+                    $w->where('nombre_norm', 'like', '%' . $t . '%');
+                }
+            })->orWhere('default_code', $txt);
         }
         return $q->orderBy('nombre')->limit(15)->get(['id', 'nombre', 'barcode', 'costo', 'precio'])->toArray();
     }
@@ -214,7 +219,7 @@ class RevisarCarga extends Component
         $base = $this->carga->items();
         $conteo = [
             'todos'    => (clone $base)->where('match', '!=', 'ninguno')->count(),
-            'verde'    => (clone $base)->whereIn('match', ['barcode', 'mapeo', 'manual', 'categoria'])->count(),
+            'verde'    => (clone $base)->whereIn('match', self::VERDES)->count(),
             'amarillo' => (clone $base)->where('match', 'nombre')->count(),
             'naranja'  => (clone $base)->where('match', 'parecido')->count(),
             'gris'     => (clone $base)->where('match', 'ninguno')->count(),

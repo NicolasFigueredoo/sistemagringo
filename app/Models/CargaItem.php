@@ -21,7 +21,7 @@ class CargaItem extends Model
     public function getColorAttribute(): string
     {
         return match ($this->match) {
-            'barcode', 'mapeo', 'manual', 'categoria' => 'verde',
+            'barcode', 'mapeo', 'codigo', 'manual', 'categoria' => 'verde',
             'nombre'   => 'amarillo',
             'parecido' => 'naranja',
             default    => 'gris',
