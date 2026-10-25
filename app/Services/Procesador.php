@@ -196,6 +196,60 @@ class Procesador
         @set_time_limit(0);
         $filas = LectorLista::leer($ruta, $ext);
 
+        $celda = fn (array $f, $col) => ($col === null || $col === '') ? null : ($f[(int) $col] ?? null);
+        $inicio = max(1, (int) $columnas['fila_inicio']) - 1;
+        $renglones = [];
+        foreach (array_slice($filas, $inicio, null, true) as $i => $f) {
+            $nombre = $celda($f, $columnas['col_nombre']);
+            $renglones[] = [
+                'fila'     => $i + 1,
+                'barcode'  => $celda($f, $columnas['col_barcode']),
+                'codigo'   => $celda($f, $columnas['col_codigo']),
+                'nombre'   => $nombre,
+                'precio'   => Precios::numero($celda($f, $columnas['col_precio']) ?? ''),
+                'cantidad' => Precios::numero($celda($f, $columnas['col_cantidad'] ?? null) ?? ''),
+                'unidad'   => isset($f[3]) && $columnas['col_precio'] == 4 ? (string) $f[3] : null,
+                'extras'   => self::codigosExtra($f, $columnas, $nombre),
+            ];
+        }
+        return $this->armarCarga($prov, $renglones, ['archivo' => $nombreArchivo] + $opciones);
+    }
+
+    /**
+     * Carga desde una factura leída con LectorFactura: solo cambia el costo y suma el stock.
+     * @param array $factura lo que devuelve LectorFactura::leer
+     * @param string[] $fotos rutas guardadas (disco local) para verlas en la revisión
+     */
+    public function crearCargaFactura(Proveedor $prov, array $factura, array $fotos, bool $ivaIncluido, bool $agregarIva): Carga
+    {
+        @set_time_limit(0);
+        $renglones = [];
+        foreach ($factura['items'] as $i => $it) {
+            // el código del proveedor a veces viene pegado a la descripción
+            $renglones[] = $it + ['fila' => $i + 1, 'unidad' => null, 'extras' => self::codigosExtra([], self::SIN_COLUMNAS, $it['nombre'])];
+        }
+        $titulo = trim(implode(' ', array_filter(['Factura', $factura['numero'], $factura['fecha'] ? "del {$factura['fecha']}" : null])));
+
+        return $this->armarCarga($prov, $renglones, [
+            'archivo'      => $titulo === 'Factura' ? 'Factura (foto)' : $titulo,
+            'tipo'         => 'factura',
+            'fotos'        => $fotos,
+            'descuento'    => (float) $factura['descuento_general'],
+            'iva_incluido' => $ivaIncluido,
+            'agregar_iva'  => $agregarIva,
+            'sumar_iva'    => false,
+            'redondeo'     => 0,
+        ]);
+    }
+
+    private const SIN_COLUMNAS = ['col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null];
+
+    /**
+     * Busca cada renglón en el catálogo y guarda la carga para revisar.
+     * @param array $renglones fila, barcode, codigo, nombre, precio, cantidad, unidad, extras (otros posibles códigos)
+     */
+    private function armarCarga(Proveedor $prov, array $renglones, array $datosCarga): Carga
+    {
         $mapeos = Mapeo::where('proveedor_id', $prov->id)->pluck('odoo_product_id', 'clave')->all();
         // códigos del proveedor en Odoo; si no se sabe qué contacto de Odoo es, los de todos (hay que confirmarlos)
         $codigosProv = CodigoProveedor::query()->select('codigo', 'product_id')
@@ -208,39 +262,35 @@ class Procesador
             (bool) $prov->odoo_partner_id
         );
 
-        $carga = DB::transaction(function () use ($prov, $filas, $columnas, $opciones, $matcher, $nombreArchivo) {
+        $carga = DB::transaction(function () use ($prov, $renglones, $datosCarga, $matcher) {
             $carga = Carga::create([
                 'proveedor_id' => $prov->id,
-                'archivo'      => $nombreArchivo,
-                'descuento'    => (float) $opciones['descuento'],
-                'iva_incluido' => (bool) $opciones['iva_incluido'],
-                'sumar_iva'    => (bool) $opciones['sumar_iva'],
-                'redondeo'     => (int) $opciones['redondeo'],
+                'archivo'      => $datosCarga['archivo'],
+                'tipo'         => $datosCarga['tipo'] ?? 'lista',
+                'fotos'        => $datosCarga['fotos'] ?? null,
+                'descuento'    => (float) $datosCarga['descuento'],
+                'iva_incluido' => (bool) $datosCarga['iva_incluido'],
+                'agregar_iva'  => (bool) ($datosCarga['agregar_iva'] ?? false),
+                'sumar_iva'    => (bool) $datosCarga['sumar_iva'],
+                'redondeo'     => (int) $datosCarga['redondeo'],
             ]);
 
-            $celda = fn (array $f, $col) => ($col === null || $col === '') ? null : ($f[(int) $col] ?? null);
-            $inicio = max(1, (int) $columnas['fila_inicio']) - 1;
             $items = [];
-
-            foreach (array_slice($filas, $inicio, null, true) as $i => $f) {
-                $precio = Precios::numero($celda($f, $columnas['col_precio']) ?? '');
-                $barcode = $celda($f, $columnas['col_barcode']);
-                $codigo = $celda($f, $columnas['col_codigo']);
-                $nombre = $celda($f, $columnas['col_nombre']);
-                $cantidad = Precios::numero($celda($f, $columnas['col_cantidad'] ?? null) ?? '');
+            foreach ($renglones as $r) {
+                ['barcode' => $barcode, 'codigo' => $codigo, 'nombre' => $nombre, 'precio' => $precio, 'cantidad' => $cantidad] = $r;
 
                 if (!$precio || $precio <= 0) continue;            // títulos, subtotales, etc.
                 if (!$barcode && !$codigo && !$nombre) continue;
 
-                $m = $matcher->buscar($barcode, $codigo, $nombre, self::codigosExtra($f, $columnas, $nombre));
+                $m = $matcher->buscar($barcode, $codigo, $nombre, $r['extras']);
 
                 $items[] = [
                     'carga_id'        => $carga->id,
-                    'fila'            => $i + 1,
+                    'fila'            => $r['fila'],
                     'barcode'         => $barcode ? mb_substr($barcode, 0, 250) : null,
                     'codigo'          => $codigo ? mb_substr($codigo, 0, 250) : null,
                     'nombre'          => $nombre ? mb_substr($nombre, 0, 250) : null,
-                    'unidad'          => isset($f[3]) && $columnas['col_precio'] == 4 ? mb_substr((string) $f[3], 0, 50) : null,
+                    'unidad'          => $r['unidad'] ? mb_substr($r['unidad'], 0, 50) : null,
                     'precio_lista'    => $precio,
                     'cantidad'        => $cantidad > 0 ? $cantidad : null,
                     'descuento'       => $carga->descuento,
@@ -340,12 +390,14 @@ class Procesador
         return [$carga, $salteados];
     }
 
-    /** Campos que se escriben en Odoo: en un ajuste de categoría el costo no se toca. */
+    /** Campos que se escriben en Odoo: en un ajuste de categoría el costo no se toca y en una factura la venta tampoco. */
     private function camposOdoo(Carga $carga, $costo, $precio): array
     {
-        return $carga->es_ajuste
-            ? ['list_price' => (float) $precio]
-            : ['standard_price' => (float) $costo, 'list_price' => (float) $precio];
+        return match (true) {
+            $carga->es_ajuste  => ['list_price' => (float) $precio],
+            $carga->es_factura => ['standard_price' => (float) $costo],
+            default            => ['standard_price' => (float) $costo, 'list_price' => (float) $precio],
+        };
     }
 
     /**
@@ -368,9 +420,10 @@ class Procesador
                     $catId = $it->odoo_product_id ? ($prodCat[$it->odoo_product_id] ?? null) : null;
                     $cat = $catId ? $categorias->get($catId) : null;
 
-                    $desc = $cat?->descuento !== null ? (float) $cat->descuento : (float) $carga->descuento;
+                    // la factura ya trae el precio final: el descuento de la categoría es para las listas
+                    $desc = $cat?->descuento !== null && !$carga->es_factura ? (float) $cat->descuento : (float) $carga->descuento;
                     $margen = $cat?->margen !== null ? (float) $cat->margen : (float) ($prov?->margen ?? $it->margen);
-                    $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido);
+                    $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
 
                     $datos = ['categoria_id' => $catId, 'descuento' => $desc, 'costo_nuevo' => $costo];
                     if ($it->precio_manual) {
@@ -461,7 +514,7 @@ class Procesador
         DB::transaction(function () use ($carga, $items, $margen, $descuento) {
             foreach ($items as $it) {
                 $desc = $descuento ?? (float) $it->descuento;
-                $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido);
+                $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
                 $m = $margen ?? (float) $it->margen;
                 $it->update([
                     'descuento'     => $desc,
@@ -505,7 +558,7 @@ class Procesador
 
         $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_nuevo, $it->precio_nuevo)])->all();
         // los que en Odoo ya tienen esos valores no hace falta escribirlos
-        $aEscribir = $items->reject(fn ($it) => self::igual($it->precio_anterior, $campos[$it->id]['list_price'])
+        $aEscribir = $items->reject(fn ($it) => (!isset($campos[$it->id]['list_price']) || self::igual($it->precio_anterior, $campos[$it->id]['list_price']))
             && (!isset($campos[$it->id]['standard_price']) || self::igual($it->costo_anterior, $campos[$it->id]['standard_price'])));
         $errores = $this->escribir($aEscribir, $campos);
 
@@ -602,7 +655,7 @@ class Procesador
     private static function actualizarLocal(int $productoId, array $campos): void
     {
         OdooProducto::where('id', $productoId)->update(array_filter(
-            ['costo' => $campos['standard_price'] ?? null, 'precio' => $campos['list_price']],
+            ['costo' => $campos['standard_price'] ?? null, 'precio' => $campos['list_price'] ?? null],
             fn ($v) => $v !== null
         ));
     }

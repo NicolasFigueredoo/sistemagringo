@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    // lectura de facturas por foto
+    'anthropic' => [
+        'key'   => env('ANTHROPIC_API_KEY'),
+        'model' => env('ANTHROPIC_MODEL', 'claude-opus-5-5'),
+    ],
+
 ];

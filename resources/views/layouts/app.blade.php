@@ -8,7 +8,7 @@
 <body class="min-h-full">
     @php
         $nav = [
-            ['subir', 'Cargar lista', 'upload', ['subir', 'revisar']],
+            ['subir', 'Cargar factura', 'camera', ['subir', 'subir.lista', 'revisar']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
             ['reajustar', 'Reajustar', 'zap', ['reajustar']],

@@ -10,6 +10,8 @@ class Carga extends Model
     protected $casts = [
         'iva_incluido' => 'boolean',
         'sumar_iva'    => 'boolean',
+        'agregar_iva'  => 'boolean',
+        'fotos'        => 'array',
         'aplicada_at'  => 'datetime',
         'deshecha_at'  => 'datetime',
     ];
@@ -22,6 +24,12 @@ class Carga extends Model
     public function getEsAjusteAttribute(): bool
     {
         return $this->proveedor_id === null;
+    }
+
+    /** Factura leída por foto: solo actualiza el costo y suma el stock, la venta no se toca */
+    public function getEsFacturaAttribute(): bool
+    {
+        return $this->tipo === 'factura';
     }
 
     public function getTituloAttribute(): string

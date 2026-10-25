@@ -9,12 +9,15 @@ class Precios
 {
     public const IVA = 21.0;
 
-    /** Costo neto sin IVA a partir del precio de lista. */
-    public static function costo(float $precioLista, float $descuento = 0, bool $ivaIncluido = false): float
+    /** Costo neto a partir del precio de lista: sin IVA, o con IVA si $agregarIva (para guardar el costo con IVA). */
+    public static function costo(float $precioLista, float $descuento = 0, bool $ivaIncluido = false, bool $agregarIva = false): float
     {
         $c = $precioLista;
         if ($ivaIncluido) {
             $c = $c / (1 + self::IVA / 100);
+        }
+        if ($agregarIva) {
+            $c = $c * (1 + self::IVA / 100);
         }
         $c = $c * (1 - $descuento / 100);
         return round($c, 2);

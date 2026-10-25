@@ -18,7 +18,7 @@
     ];
 @endphp
 <div class="space-y-6">
-    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,elegir,aplicarCategoria" />
+    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,aplicarCategoria" />
 
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -29,7 +29,9 @@
             <p class="page-subtitle">
                 {{ $carga->archivo }} · {{ $carga->created_at->format('d/m/Y H:i') }}
                 @if($carga->descuento > 0) · Descuento {{ $pct($carga->descuento) }}% @endif
-                @if($carga->iva_incluido) · Lista con IVA @endif
+                @if($carga->es_factura)
+                    · {{ $carga->agregar_iva ? 'Costo con IVA agregado' : ($carga->iva_incluido ? 'IVA descontado del costo' : 'Costo tal cual la factura') }}
+                @elseif($carga->iva_incluido) · Lista con IVA @endif
             </p>
         </div>
         @if($carga->estado === 'aplicada')
@@ -58,7 +60,44 @@
         @endforeach
     </div>
 
-    @if($editable)
+    @if($carga->es_factura)
+    <section class="card">
+        <div class="card-body flex flex-wrap items-start gap-6">
+            @if($editable)
+            <div>
+                <span class="label">IVA de los precios de la factura</span>
+                <div class="inline-flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                    @foreach(['tal_cual' => 'Tal cual', 'sacar' => 'Sacar IVA', 'agregar' => 'Agregar IVA'] as $k => $texto)
+                        <button type="button" wire:click="$set('iva', '{{ $k }}')"
+                                class="rounded-md px-3 py-1.5 text-sm font-medium {{ $iva === $k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50' }}">
+                            {{ $texto }}
+                        </button>
+                    @endforeach
+                </div>
+                <p class="mt-1.5 text-xs text-slate-500">Solo se actualiza el costo y se suma el stock. El precio de venta no se toca.</p>
+            </div>
+            @endif
+            @if($carga->fotos)
+            <div>
+                <span class="label">Factura</span>
+                <div class="flex flex-wrap gap-2">
+                    @foreach($carga->fotos as $n => $ruta)
+                        <a href="{{ route('carga.foto', [$carga, $n]) }}" target="_blank" title="Ver hoja {{ $n + 1 }}"
+                           class="relative block h-20 w-16 overflow-hidden rounded-md border border-slate-200 bg-slate-100 hover:border-brand-500">
+                            @if(str_ends_with(strtolower($ruta), '.pdf'))
+                                <span class="flex h-full items-center justify-center"><x-icon name="file" class="h-5 w-5 text-slate-400" /></span>
+                            @else
+                                <img src="{{ route('carga.foto', [$carga, $n]) }}" alt="Hoja {{ $n + 1 }}" class="h-full w-full object-cover">
+                            @endif
+                            <span class="absolute left-1 top-1 rounded bg-slate-900/70 px-1 text-[10px] font-medium text-white">{{ $n + 1 }}</span>
+                        </a>
+                    @endforeach
+                </div>
+            </div>
+            @endif
+        </div>
+    </section>
+    @elseif($editable)
     <section class="card">
         <div class="card-body flex flex-wrap items-end gap-6">
             <div>
@@ -157,11 +196,13 @@
                             </div>
                         @endif
                     </th>
-                    <th>{{ $carga->es_ajuste ? 'Producto' : 'Lista del proveedor' }}</th>
+                    <th>{{ $carga->es_ajuste ? 'Producto' : ($carga->es_factura ? 'Factura' : 'Lista del proveedor') }}</th>
                     <th>Producto en Odoo</th>
                     <th class="!text-right">Costo</th>
+                    @unless($carga->es_factura)
                     <th class="!text-center">Ganancia</th>
                     <th class="!text-right">Precio de venta</th>
+                    @endunless
                     @unless($carga->es_ajuste)<th class="!text-center">Ingresa</th>@endunless
                 </tr>
             </thead>
@@ -183,7 +224,8 @@
                             @if($it->barcode)<span class="font-mono">{{ $it->barcode }}</span><span>·</span>@endif
                             @if($it->codigo)<span>Cód. {{ $it->codigo }}</span><span>·</span>@endif
                             @if($it->unidad && !is_numeric($it->unidad))<span>{{ $it->unidad }}</span><span>·</span>@endif
-                            <span>Lista {{ $m($it->precio_lista) }}</span>
+                            <span>{{ $carga->es_factura ? 'Factura' : 'Lista' }} {{ $m($it->precio_lista) }}</span>
+                            @if($carga->es_factura && (float) $it->cantidad > 0)<span>· x {{ $cant($it->cantidad) }}</span>@endif
                             @if((float) $it->descuento > 0)<span>· Dto. {{ $pct($it->descuento) }}%</span>@endif
                         </div>
                     </td>
@@ -230,6 +272,7 @@
                         @endif
                     </td>
 
+                    @unless($carga->es_factura)
                     <td class="text-center">
                         <div class="relative mx-auto w-24">
                             <input type="text" inputmode="decimal" value="{{ $pct($it->margen) }}" @disabled(!$editable)
@@ -251,6 +294,7 @@
                         </div>
                         @if($it->precio_manual)<div class="mt-0.5 text-[11px] text-brand-600">Editado a mano</div>@endif
                     </td>
+                    @endunless
 
                     @unless($carga->es_ajuste)
                     <td class="text-center">
@@ -283,7 +327,7 @@
     <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="text-sm text-slate-600">
-                Se van a actualizar <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
+                {{ $carga->es_factura ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
                 @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock. @endif
             </div>
             <button wire:click="aplicar" @disabled($seleccionados === 0)

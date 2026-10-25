@@ -34,6 +34,7 @@ class RevisarCarga extends Component
     public $margenMasivo = '';
     public bool $sumarIva = true;
     public $redondeo = 0;
+    public string $iva = 'tal_cual';    // factura: tal_cual | sacar | agregar
 
     // buscador manual de producto
     public ?int $buscandoItem = null;
@@ -47,6 +48,7 @@ class RevisarCarga extends Component
         $this->carga = $carga;
         $this->sumarIva = $carga->sumar_iva;
         $this->redondeo = $carga->redondeo;
+        $this->iva = $carga->agregar_iva ? 'agregar' : ($carga->iva_incluido ? 'sacar' : 'tal_cual');
         $this->margenMasivo = (string) (($carga->proveedor?->margen ?? $carga->categoria?->margen ?? 0) + 0);
         $this->mensaje = session('aviso');
     }
@@ -91,6 +93,14 @@ class RevisarCarga extends Component
         if (!$this->editable()) return;
         $this->carga->update(['sumar_iva' => $this->sumarIva]);
         $this->proc()->recalcular($this->carga->fresh());
+    }
+
+    /** Factura: los precios vienen con IVA (se saca) o sin IVA (se agrega al costo). */
+    public function updatedIva(): void
+    {
+        if (!$this->editable() || !$this->carga->es_factura) return;
+        $this->carga->update(['iva_incluido' => $this->iva === 'sacar', 'agregar_iva' => $this->iva === 'agregar']);
+        $this->proc()->aplicarReglas($this->carga->fresh());
     }
 
     public function updatedRedondeo(): void
