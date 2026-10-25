@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Models\LecturaFactura;
 use App\Models\OdooProducto;
 use App\Models\Proveedor;
 use App\Services\LectorFactura;
@@ -76,7 +77,12 @@ class SubirFactura extends Component
         if (!$this->fotos) { $this->error = 'Sacá o adjuntá la foto de la factura.'; return; }
         if ($this->proveedorId === 'nuevo' && trim($this->nuevoProveedor) === '') { $this->error = 'Escribí el nombre del proveedor nuevo.'; return; }
         if (OdooProducto::count() === 0) { $this->error = 'Falta bajar el catálogo de Odoo. Tocá "Actualizar catálogo".'; return; }
+        if (($tope = LecturaFactura::tope()) && LecturaFactura::delMes() >= $tope) {
+            $this->error = "Se llegó al límite de $tope facturas de este mes. Para cargar más, consultá por la ampliación del plan.";
+            return;
+        }
 
+        @set_time_limit(0);   // la IA tarda hasta un minuto en leer la factura
         try {
             $factura = LectorFactura::desdeConfig()->leer(array_map(fn ($f) => $f->getRealPath(), $this->fotos));
         } catch (\Throwable $e) {
@@ -150,6 +156,8 @@ class SubirFactura extends Component
             'proveedores'   => Proveedor::orderByRaw('LOWER(nombre)')->get(['id', 'nombre']),
             'catalogo'      => OdooProducto::count(),
             'catalogoFecha' => OdooProducto::max('updated_at'),
+            'leidasMes'     => LecturaFactura::delMes(),
+            'tope'          => LecturaFactura::tope(),
         ]);
     }
 }

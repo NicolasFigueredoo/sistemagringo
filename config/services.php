@@ -38,7 +38,9 @@ return [
     // lectura de facturas por foto
     'anthropic' => [
         'key'   => env('ANTHROPIC_API_KEY'),
-        'model' => env('ANTHROPIC_MODEL', 'claude-opus-5-5'),
+        'model' => env('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
+        // facturas que se pueden leer por mes (0 = sin tope)
+        'facturas_por_mes' => env('FACTURAS_POR_MES', 200),
     ],
 
 ];

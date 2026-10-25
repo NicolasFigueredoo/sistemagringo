@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Anthropic\Client;
+use App\Models\LecturaFactura;
 use RuntimeException;
 
 /**
@@ -61,6 +62,15 @@ class LectorFactura
             betas: ['server-side-fallback-2026-07-01'],
             requestOptions: ['timeout' => 240],
         );
+
+        // se paga aunque después la respuesta no sirva: cuenta para el tope del mes
+        LecturaFactura::create([
+            'user_id'        => auth()->id(),
+            'fotos'          => count($rutas),
+            'modelo'         => $resp->model,
+            'tokens_entrada' => $resp->usage->inputTokens,
+            'tokens_salida'  => $resp->usage->outputTokens,
+        ]);
 
         if ($resp->stopReason === 'refusal') throw new RuntimeException('La IA no quiso leer esta imagen. Probá con otra foto.');
         if ($resp->stopReason === 'max_tokens') throw new RuntimeException('La factura es muy larga para leerla de una vez: subila en partes.');

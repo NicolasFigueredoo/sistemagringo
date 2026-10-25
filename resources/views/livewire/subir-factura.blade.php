@@ -122,8 +122,20 @@
                 <p class="mt-1.5 text-xs text-slate-500">{{ $opcionesIva[$iva][1] }} Lo podés cambiar después en la revisión.</p>
             </div>
         </div>
-        <div class="flex justify-end rounded-b-lg border-t border-slate-200 bg-slate-50 px-5 py-4">
-            <button wire:click="procesar" @disabled(!$fotos) class="btn-primary btn-lg">
+        @php $agotado = $tope && $leidasMes >= $tope; @endphp
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-slate-200 bg-slate-50 px-5 py-4">
+            <div class="text-sm text-slate-600">
+                @if($tope)
+                    Facturas leídas este mes:
+                    <span class="font-semibold {{ $agotado ? 'text-red-600' : ($leidasMes >= $tope * 0.8 ? 'text-amber-600' : 'text-slate-900') }}">{{ $leidasMes }} / {{ $tope }}</span>
+                    <div class="mt-1 h-1.5 w-48 overflow-hidden rounded-full bg-slate-200">
+                        <div class="h-full rounded-full {{ $agotado ? 'bg-red-500' : ($leidasMes >= $tope * 0.8 ? 'bg-amber-500' : 'bg-brand-600') }}" style="width: {{ min(100, round($leidasMes / $tope * 100)) }}%"></div>
+                    </div>
+                @else
+                    Facturas leídas este mes: <span class="font-semibold text-slate-900">{{ $leidasMes }}</span>
+                @endif
+            </div>
+            <button wire:click="procesar" @disabled(!$fotos || $agotado) class="btn-primary btn-lg">
                 Leer factura
                 <x-icon name="arrow-right" />
             </button>
