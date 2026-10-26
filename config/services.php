@@ -43,4 +43,14 @@ return [
         'facturas_por_mes' => env('FACTURAS_POR_MES', 200),
     ],
 
+    // webs de proveedores que piden usuario para bajar la lista de precios (por dominio, sin www)
+    'listas' => [
+        'ferriplast.com.ar' => [
+            'login'    => '/pedidos/user/login',
+            'env'      => 'FERRIPLAST',
+            'email'    => env('FERRIPLAST_EMAIL'),
+            'password' => env('FERRIPLAST_PASSWORD'),
+        ],
+    ],
+
 ];

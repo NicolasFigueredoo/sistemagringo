@@ -250,7 +250,7 @@ class Procesador
      */
     private function armarCarga(Proveedor $prov, array $renglones, array $datosCarga): Carga
     {
-        $mapeos = Mapeo::where('proveedor_id', $prov->id)->pluck('odoo_product_id', 'clave')->all();
+        $mapeos = array_map('intval', Mapeo::where('proveedor_id', $prov->id)->pluck('odoo_product_id', 'clave')->all());
         // códigos del proveedor en Odoo; si no se sabe qué contacto de Odoo es, los de todos (hay que confirmarlos)
         $codigosProv = CodigoProveedor::query()->select('codigo', 'product_id')
             ->when($prov->odoo_partner_id, fn ($q) => $q->where('partner_id', $prov->odoo_partner_id))
@@ -461,8 +461,11 @@ class Procesador
         }
     }
 
-    /** El usuario eligió a mano el producto correcto. */
-    public function elegir(CargaItem $item, int $productoId): void
+    /**
+     * El usuario eligió a mano el producto correcto.
+     * @param string|null $guardarCodigo proveedor | referencia: al aplicar se escribe el código del renglón en Odoo
+     */
+    public function elegir(CargaItem $item, int $productoId, ?string $guardarCodigo = null): void
     {
         $p = OdooProducto::findOrFail($productoId);
         $item->update([
@@ -470,9 +473,19 @@ class Procesador
             'odoo_nombre'     => $p->nombre,
             'match'           => 'manual',
             'seleccionado'    => true,
+            'guardar_codigo'  => $item->codigo && in_array($guardarCodigo, ['proveedor', 'referencia'], true) ? $guardarCodigo : null,
         ]);
         $this->aplicarReglas($item->carga, [$item->id]);
         $this->traerPreciosActuales($item->carga, [$item->id]);
+    }
+
+    /** "No hacer nada": el renglón no se usa y al aplicar se recuerda para las próximas listas del proveedor. */
+    public function ignorar(CargaItem $item): void
+    {
+        $item->update([
+            'odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ignorado', 'seleccionado' => false,
+            'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null, 'stock_anterior' => null,
+        ]);
     }
 
     /** % masivo / IVA / redondeo. Con $margenMasivo pisa todo (también categorías y precios a mano). */
@@ -561,6 +574,8 @@ class Procesador
         $aEscribir = $items->reject(fn ($it) => (!isset($campos[$it->id]['list_price']) || self::igual($it->precio_anterior, $campos[$it->id]['list_price']))
             && (!isset($campos[$it->id]['standard_price']) || self::igual($it->costo_anterior, $campos[$it->id]['standard_price'])));
         $errores = $this->escribir($aEscribir, $campos);
+        // códigos elegidos al asociar a mano (solo de los que se actualizaron bien)
+        $erroresCodigo = $this->guardarCodigos($carga, $items->filter(fn ($it) => $it->guardar_codigo && !isset($errores[$it->id])));
 
         // stock que ingresa: se suma solo a los que se actualizaron bien
         $conStock = $items->filter(fn ($it) => !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
@@ -568,7 +583,7 @@ class Procesador
             $conStock->groupBy('odoo_product_id')->map(fn ($g) => (float) $g->sum('cantidad'))->all()
         );
 
-        DB::transaction(function () use ($carga, $items, $campos, $errores, $conStock, $erroresStock) {
+        DB::transaction(function () use ($carga, $items, $campos, $errores, $conStock, $erroresStock, $erroresCodigo) {
             foreach ($items as $it) {
                 if (isset($errores[$it->id])) {
                     $it->update(['error' => mb_substr($errores[$it->id], 0, 250)]);
@@ -576,10 +591,12 @@ class Procesador
                 }
                 // el precio quedó; si el stock falló se avisa en el renglón
                 $errStock = $conStock->has($it->id) ? ($erroresStock[$it->odoo_product_id] ?? null) : null;
+                $aviso = implode(' · ', array_filter([$errStock, $erroresCodigo[$it->id] ?? null]));
                 $it->update([
                     'aplicado'       => true,
                     'stock_aplicado' => $it->stock_aplicado || ($conStock->has($it->id) && !$errStock),
-                    'error'          => $errStock ? mb_substr($errStock, 0, 250) : null,
+                    'guardar_codigo' => isset($erroresCodigo[$it->id]) ? $it->guardar_codigo : null,
+                    'error'          => $aviso !== '' ? mb_substr($aviso, 0, 250) : null,
                 ]);
                 self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
 
@@ -593,10 +610,59 @@ class Procesador
                     }
                 }
             }
+            // "no hacer nada" también se recuerda
+            foreach ($carga->items()->where('match', 'ignorado')->get() as $it) {
+                foreach (Matcher::claves($it->barcode, $it->codigo, $it->nombre) as $clave) {
+                    Mapeo::updateOrCreate(
+                        ['proveedor_id' => $carga->proveedor_id, 'clave' => mb_substr($clave, 0, 250)],
+                        ['odoo_product_id' => Matcher::IGNORAR]
+                    );
+                }
+            }
             $carga->update(['estado' => 'aplicada', 'aplicada_at' => now()]);
         });
 
         return [$items->count() - count($errores), count($errores)];
+    }
+
+    /**
+     * Escribe en Odoo el código de la lista en el producto elegido a mano:
+     *   proveedor  -> código del proveedor en la pestaña Compra (product.supplierinfo), con el costo como precio
+     *   referencia -> referencia interna del producto (default_code)
+     * Devuelve [item_id => error].
+     */
+    private function guardarCodigos(Carga $carga, Collection $items): array
+    {
+        $partner = $carga->proveedor?->odoo_partner_id;
+        $plantillas = OdooProducto::whereIn('id', $items->pluck('odoo_product_id'))->pluck('product_tmpl_id', 'id');
+        $errores = [];
+        foreach ($items as $it) {
+            $pid = (int) $it->odoo_product_id;
+            try {
+                if ($it->guardar_codigo === 'referencia') {
+                    $this->odoo->write('product.product', [$pid], ['default_code' => $it->codigo]);
+                    OdooProducto::where('id', $pid)->update(['default_code' => $it->codigo]);
+                    continue;
+                }
+                if (!$partner) throw new \RuntimeException('el proveedor no está vinculado a un contacto de Odoo');
+                $tmpl = $plantillas[$pid] ?? null;
+                $valores = ['product_code' => $it->codigo, 'price' => (float) $it->costo_nuevo];
+                $existente = $this->odoo->searchRead('product.supplierinfo', [
+                    ['partner_id', '=', $partner], '|', ['product_id', '=', $pid], '&', ['product_id', '=', false], ['product_tmpl_id', '=', $tmpl],
+                ], ['id'], 0, 1)[0]['id'] ?? null;
+                if ($existente) {
+                    $this->odoo->write('product.supplierinfo', [$existente], $valores);
+                } else {
+                    $this->odoo->call('product.supplierinfo', 'create', [$valores + ['partner_id' => $partner, 'product_tmpl_id' => $tmpl, 'product_id' => $pid]]);
+                }
+                if ($k = Matcher::codigoClave($it->codigo)) {
+                    CodigoProveedor::insert(['partner_id' => $partner, 'codigo' => mb_substr($k, 0, 250), 'product_id' => $pid]);
+                }
+            } catch (\Throwable $e) {
+                $errores[$it->id] = 'Código: ' . $e->getMessage();
+            }
+        }
+        return $errores;
     }
 
     /** Vuelve a poner en Odoo los precios que había antes de esta carga. */

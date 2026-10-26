@@ -18,7 +18,7 @@
     ];
 @endphp
 <div class="space-y-6">
-    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,aplicarCategoria" />
+    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria" />
 
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -176,10 +176,11 @@
         @endif
     </div>
 
-    @if($conteo['amarillo'] + $conteo['naranja'] > 0 && $editable)
-        <div class="alert-info">
-            <x-icon name="info" class="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Los productos marcados como <b>Confirmar</b> o <b>Elegir</b> no se actualizan automáticamente: seleccionalos o elegí el producto correcto.</span>
+    @if($pendientes > 0)
+        <div class="alert-info items-center">
+            <x-icon name="info" class="h-4 w-4 shrink-0" />
+            <span class="flex-1"><b>{{ number_format($pendientes, 0, ',', '.') }}</b> productos no se encontraron por código de barras ni referencia. Revisalos uno por uno: asocialos a un producto de Odoo (y guardá el código para la próxima) o marcá "No hacer nada".</span>
+            <button wire:click="recorrer" class="btn-primary shrink-0 px-3 py-1.5 text-xs"><x-icon name="search" class="h-3.5 w-3.5" /> Revisar uno por uno</button>
         </div>
     @endif
 
@@ -208,7 +209,7 @@
             </thead>
             <tbody>
             @forelse($items as $it)
-                @php [$badge, $dot, $txt] = $estilos[$it->color]; $var = $it->variacion; $grande = $var !== null && abs($var) > 30; @endphp
+                @php [$badge, $dot, $txt] = $estilos[$it->color]; $var = $it->variacion; $grande = $var !== null && abs($var) > 30; if ($it->match === 'ignorado') $txt = 'No hacer nada'; @endphp
                 <tr wire:key="it-{{ $it->id }}" class="{{ $it->error ? 'bg-red-50/60' : ($it->seleccionado ? '' : 'bg-slate-50/50') }}">
                     <td class="text-center">
                         @if($it->odoo_product_id)
@@ -234,6 +235,9 @@
                         <span class="{{ $badge }}"><span class="dot {{ $dot }}"></span>{{ $txt }}</span>
                         @if($it->odoo_product_id)
                             <div class="mt-1 font-medium text-slate-900">{{ $it->odoo_nombre }}</div>
+                            @if($it->guardar_codigo)
+                                <div class="mt-0.5 text-[11px] text-brand-600">Se guarda «{{ $it->codigo }}» como {{ $it->guardar_codigo === 'referencia' ? 'referencia interna' : 'código del proveedor' }}</div>
+                            @endif
                             @if($editable && !$carga->es_ajuste)
                                 <div class="mt-1 flex gap-3">
                                     <button wire:click="abrirBuscador({{ $it->id }})" class="link text-xs">Cambiar</button>
@@ -250,9 +254,14 @@
                                             <span class="truncate">{{ $cand['nombre'] }}</span>
                                         </button>
                                     @endforeach
-                                    <button wire:click="abrirBuscador({{ $it->id }})" class="btn-secondary mt-1 px-2.5 py-1 text-xs">
-                                        <x-icon name="search" class="h-3.5 w-3.5" /> Buscar producto
-                                    </button>
+                                    <div class="mt-1 flex items-center gap-3">
+                                        <button wire:click="abrirBuscador({{ $it->id }})" class="btn-secondary px-2.5 py-1 text-xs">
+                                            <x-icon name="search" class="h-3.5 w-3.5" /> Buscar producto
+                                        </button>
+                                        @if($it->match !== 'ignorado')
+                                            <button wire:click="ignorar({{ $it->id }})" class="text-xs font-medium text-slate-500 hover:text-slate-700">No hacer nada</button>
+                                        @endif
+                                    </div>
                                 </div>
                             @endif
                         @endif
@@ -341,30 +350,82 @@
     @endif
 
     {{-- Buscador manual --}}
-    @if($buscandoItem)
-    <div class="fixed inset-0 z-40 flex items-start justify-center bg-slate-900/30 px-4 pt-20" wire:click.self="cerrarBuscador">
-        <div class="w-full max-w-xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-            <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                <h3 class="text-base font-semibold text-slate-900">Buscar producto en Odoo</h3>
-                <button wire:click="cerrarBuscador" class="btn-ghost px-1.5 py-1.5"><x-icon name="x" /></button>
+    @if($buscando)
+    <div class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-900/30 px-4 py-10" wire:click.self="cerrarBuscador">
+        <div class="w-full max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+            <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div class="min-w-0">
+                    <div class="text-xs font-medium text-slate-500">{{ $carga->es_factura ? 'Factura' : 'Lista del proveedor' }} · fila {{ $buscando->fila }}@if($recorriendo) · quedan {{ $pendientes }} sin encontrar @endif</div>
+                    <h3 class="mt-0.5 text-base font-semibold text-slate-900">{{ $buscando->nombre ?: 'Sin descripción' }}</h3>
+                    <div class="mt-1 flex flex-wrap gap-x-3 text-xs text-slate-500">
+                        @if($buscando->codigo)<span>Cód. <b class="font-mono text-slate-700">{{ $buscando->codigo }}</b></span>@endif
+                        @if($buscando->barcode)<span class="font-mono">{{ $buscando->barcode }}</span>@endif
+                        <span>{{ $carga->es_factura ? 'Factura' : 'Lista' }} {{ $m($buscando->precio_lista) }}</span>
+                        <span>Costo nuevo <b class="text-slate-700">{{ $m($buscando->costo_nuevo) }}</b></span>
+                    </div>
+                </div>
+                <button wire:click="cerrarBuscador" class="btn-ghost shrink-0 px-1.5 py-1.5"><x-icon name="x" /></button>
             </div>
-            <div class="p-4">
+
+            <div class="space-y-3 p-4">
                 <div class="relative">
                     <x-icon name="search" class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    <input wire:model.live.debounce.400ms="busqueda" type="text" autofocus placeholder="Nombre o código de barras" class="input pl-9">
+                    <input wire:model.live.debounce.400ms="busqueda" wire:key="busqueda-{{ $buscando->id }}" type="text" autofocus
+                           placeholder="Nombre, código de barras o referencia" class="input pl-9">
                 </div>
+
+                @if($buscando->codigo)
+                    <div class="rounded-md bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+                        <div class="mb-1.5 font-medium text-slate-700">Al asociar, guardar el código «{{ $buscando->codigo }}» en Odoo:</div>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1.5">
+                            <label class="flex items-center gap-1.5 {{ $conPartner ? '' : 'opacity-50' }}" title="{{ $conPartner ? '' : 'Este proveedor no está vinculado a un contacto de Odoo' }}">
+                                <input type="radio" wire:model="guardarCodigo" value="proveedor" @disabled(!$conPartner) class="h-3.5 w-3.5 text-brand-600"> Código del proveedor (pestaña Compra)
+                            </label>
+                            <label class="flex items-center gap-1.5">
+                                <input type="radio" wire:model="guardarCodigo" value="referencia" class="h-3.5 w-3.5 text-brand-600"> Referencia interna
+                            </label>
+                            <label class="flex items-center gap-1.5">
+                                <input type="radio" wire:model="guardarCodigo" value="" class="h-3.5 w-3.5 text-brand-600"> No guardar
+                            </label>
+                        </div>
+                        <div class="mt-1.5 text-slate-500">Se escribe al tocar "Actualizar en Odoo". Así la próxima lista lo encuentra sola.</div>
+                    </div>
+                @endif
             </div>
-            <div class="max-h-96 divide-y divide-slate-100 overflow-y-auto border-t border-slate-100">
+
+            <div class="max-h-[50vh] divide-y divide-slate-100 overflow-y-auto border-t border-slate-100">
                 @forelse($resultados as $r)
-                    <button wire:click="elegir({{ $buscandoItem }}, {{ $r['id'] }})" class="block w-full px-5 py-3 text-left hover:bg-slate-50">
-                        <div class="text-sm font-medium text-slate-900">{{ $r['nombre'] }}</div>
-                        <div class="mt-0.5 text-xs text-slate-500">
-                            @if($r['barcode'])<span class="font-mono">{{ $r['barcode'] }}</span> · @endif Costo {{ $m($r['costo']) }} · Precio {{ $m($r['precio']) }}
+                    @php $dif = (float) $r['costo'] > 0 ? round(((float) $buscando->costo_nuevo / (float) $r['costo'] - 1) * 100, 1) : null; @endphp
+                    <button wire:click="elegir({{ $buscando->id }}, {{ $r['id'] }})" wire:key="res-{{ $r['id'] }}" class="flex w-full items-center gap-4 px-5 py-3 text-left hover:bg-slate-50">
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm font-medium text-slate-900">{{ $r['nombre'] }}</div>
+                            <div class="mt-0.5 space-x-1 text-xs text-slate-500">
+                                @if($r['default_code'])<span>Ref. <span class="font-mono">{{ $r['default_code'] }}</span></span><span>·</span>@endif
+                                @if($r['barcode'])<span class="font-mono">{{ $r['barcode'] }}</span><span>·</span>@endif
+                                <span>Venta {{ $m($r['precio']) }}</span>
+                            </div>
+                        </div>
+                        <div class="shrink-0 text-right text-xs">
+                            <div class="text-slate-500">Costo actual <b class="text-slate-800">{{ $m($r['costo']) }}</b></div>
+                            @if($dif !== null)
+                                <div class="mt-0.5 font-medium {{ abs($dif) > 30 ? 'rounded bg-red-50 px-1.5 text-red-700 ring-1 ring-red-600/20' : ($dif > 0 ? 'text-red-600' : 'text-emerald-600') }}">
+                                    {{ $dif > 0 ? '+' : '' }}{{ $pct($dif) }}% con la lista
+                                </div>
+                            @endif
                         </div>
                     </button>
                 @empty
-                    <p class="px-5 py-4 text-sm text-slate-500">Escribí parte del nombre, por ejemplo "palo escoba".</p>
+                    <p class="px-5 py-4 text-sm text-slate-500">Sin resultados. Probá con menos palabras ("palo escoba") o con el código.</p>
                 @endforelse
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
+                <button wire:click="ignorar({{ $buscando->id }})" class="btn-secondary text-sm" title="No se actualiza y en las próximas listas de este proveedor viene ignorado">
+                    No hacer nada
+                </button>
+                @if($recorriendo)
+                    <button wire:click="siguiente" class="btn-ghost text-sm">Dejar para después <x-icon name="arrow-right" class="h-3.5 w-3.5" /></button>
+                @endif
             </div>
         </div>
     </div>

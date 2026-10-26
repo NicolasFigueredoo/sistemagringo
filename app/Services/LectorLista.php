@@ -221,6 +221,8 @@ class LectorLista
         foreach ($filas as $f) {
             $f = array_map(fn ($c) => trim((string) ($c ?? '')), (array) $f);
             if (implode('', $f) === '') continue;
+            // Excel a veces trae cientos de columnas vacías a la derecha
+            while ($f && end($f) === '') array_pop($f);
             $out[] = array_values($f);
         }
         return $out;
@@ -246,8 +248,12 @@ class LectorLista
                 if ($tmp['col_barcode'] === null && preg_match('/(barra|ean|barcode|cod.*bar)/', $t)) { $tmp['col_barcode'] = $c; $hits++; }
                 elseif ($tmp['col_precio'] === null && preg_match('/(precio|costo|importe|p unit|unitario|valor|lista)/', $t)) { $tmp['col_precio'] = $c; $hits++; }
                 elseif ($tmp['col_cantidad'] === null && preg_match('/^(cant|cantidad|cant\.?|unidades|uds|qty)$/', $t)) { $tmp['col_cantidad'] = $c; }
-                elseif ($tmp['col_nombre'] === null && preg_match('/(desc|nombre|articulo|producto|detalle)/', $t)) { $tmp['col_nombre'] = $c; $hits++; }
+                elseif ($tmp['col_nombre'] === null && preg_match('/(desc|nombre|articulo|producto|detalle|denominacion)/', $t)) { $tmp['col_nombre'] = $c; $hits++; }
                 elseif ($tmp['col_codigo'] === null && preg_match('/(cod|art|sku|ref)/', $t)) { $tmp['col_codigo'] = $c; $hits++; }
+            }
+            // si hay "Precio lista" y "Precio costo", el costo es el que ya tiene aplicado el descuento
+            foreach ($fila as $c => $celda) {
+                if ($tmp['col_precio'] !== null && preg_match('/costo/', Matcher::normalizar($celda))) { $tmp['col_precio'] = $c; break; }
             }
             if ($hits >= 2) {
                 $tmp['fila_inicio'] = $i + 2; // datos arrancan debajo del encabezado (1-based)

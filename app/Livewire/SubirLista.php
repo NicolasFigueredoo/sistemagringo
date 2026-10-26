@@ -4,12 +4,14 @@ namespace App\Livewire;
 
 use App\Models\OdooProducto;
 use App\Models\Proveedor;
+use App\Services\DescargaLista;
 use App\Services\LectorLista;
 use App\Services\OdooClient;
 use App\Services\Precios;
 use App\Services\Procesador;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -21,6 +23,9 @@ class SubirLista extends Component
     use WithFileUploads;
 
     public $archivo;
+    // lista bajada de la web del proveedor (en vez de subir el archivo)
+    public string $listaUrl = '';
+    #[Locked] public ?array $descargada = null;   // ruta, ext, nombre
     public $proveedorId = '';
     public string $nuevoProveedor = '';
 
@@ -55,6 +60,7 @@ class SubirLista extends Component
             $this->descuento = (float) $p->descuento;
             $this->margen = (float) $p->margen;
             $this->ivaIncluido = (bool) $p->iva_incluido;
+            $this->listaUrl = (string) $p->lista_url;
             if ($this->preview && $p->col_precio !== null) {
                 $this->columnas = $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio', 'col_cantidad']);
             }
@@ -65,9 +71,38 @@ class SubirLista extends Component
     {
         $this->error = null;
         $this->validate(['archivo' => 'required|file|max:20480|mimes:xlsx,xls,ods,csv,txt,pdf']);
+        $this->descargada = null;
+        $this->leerArchivo();
+    }
 
+    /** Baja la lista desde la web del proveedor y sigue igual que si se hubiera subido el archivo. */
+    public function traerDeWeb(): void
+    {
+        $this->error = null;
+        if (trim($this->listaUrl) === '') { $this->error = 'Pegá la dirección de la lista.'; return; }
         try {
-            $filas = LectorLista::leer($this->archivo->getRealPath(), $this->archivo->getClientOriginalExtension());
+            $this->descargada = DescargaLista::bajar($this->listaUrl);
+        } catch (\Throwable $e) {
+            $this->error = 'No se pudo bajar la lista: ' . $e->getMessage();
+            return;
+        }
+        $this->archivo = null;
+        $this->leerArchivo();
+    }
+
+    /** @return array{ruta:string, ext:string, nombre:string}|null el archivo subido o el bajado de la web */
+    private function fuente(): ?array
+    {
+        if ($this->descargada) return $this->descargada;
+        if (!$this->archivo) return null;
+        return ['ruta' => $this->archivo->getRealPath(), 'ext' => $this->archivo->getClientOriginalExtension(), 'nombre' => $this->archivo->getClientOriginalName()];
+    }
+
+    private function leerArchivo(): void
+    {
+        $f = $this->fuente();
+        try {
+            $filas = LectorLista::leer($f['ruta'], $f['ext']);
         } catch (\Throwable $e) {
             $this->error = $e->getMessage();
             $this->preview = [];
@@ -104,7 +139,7 @@ class SubirLista extends Component
     {
         $this->error = null;
 
-        if (!$this->archivo) { $this->error = 'Primero elegí el archivo.'; return; }
+        if (!$f = $this->fuente()) { $this->error = 'Primero elegí el archivo o traé la lista de la web.'; return; }
         if (!$this->proveedorId) { $this->error = 'Elegí el proveedor.'; return; }
         if ($this->proveedorId === 'nuevo' && trim($this->nuevoProveedor) === '') { $this->error = 'Escribí el nombre del proveedor nuevo.'; return; }
         if ($this->columnas['col_precio'] === null || $this->columnas['col_precio'] === '') { $this->error = 'Indicá cuál columna es el PRECIO.'; return; }
@@ -124,14 +159,14 @@ class SubirLista extends Component
             'descuento'    => Precios::numero($this->descuento) ?? 0,
             'margen'       => Precios::numero($this->margen) ?? 0,
             'iva_incluido' => $this->ivaIncluido,
-        ]);
+        ] + ($this->descargada ? ['lista_url' => trim($this->listaUrl)] : []));
 
         try {
             $carga = (new Procesador(OdooClient::desdeConfig()))->crearCarga(
                 $prov,
-                $this->archivo->getRealPath(),
-                $this->archivo->getClientOriginalExtension(),
-                $this->archivo->getClientOriginalName(),
+                $f['ruta'],
+                $f['ext'],
+                $f['nombre'],
                 $cols,
                 [
                     'descuento'    => Precios::numero($this->descuento) ?? 0,

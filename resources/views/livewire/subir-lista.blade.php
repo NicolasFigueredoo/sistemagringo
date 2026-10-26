@@ -2,7 +2,7 @@
     $letra = fn($i) => chr(65 + $i);
 @endphp
 <div class="space-y-6" wire:init="cargarProveedores">
-    <x-cargando target="archivo,procesar,sincronizar" />
+    <x-cargando target="archivo,procesar,sincronizar,traerDeWeb" />
 
     <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -54,6 +54,17 @@
                     <input wire:model="archivo" type="file" accept=".xlsx,.xls,.ods,.csv,.pdf" class="sr-only">
                 </label>
                 @error('archivo') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+
+                <span class="label mt-4">O traer la lista de la web del proveedor</span>
+                <div class="flex gap-2">
+                    <input wire:model="listaUrl" type="url" placeholder="https://…" class="input min-w-0 flex-1">
+                    <button wire:click="traerDeWeb" class="btn-secondary shrink-0"><x-icon name="refresh" /> Traer lista</button>
+                </div>
+                @if($descargada)
+                    <p class="mt-1 text-xs text-emerald-700">Bajada: {{ $descargada['nombre'] }}</p>
+                @else
+                    <p class="mt-1 text-xs text-slate-500">La dirección se guarda en el proveedor para la próxima.</p>
+                @endif
             </div>
         </div>
     </section>

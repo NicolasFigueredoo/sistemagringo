@@ -5,6 +5,7 @@ namespace App\Livewire;
 use App\Models\Carga;
 use App\Models\CargaItem;
 use App\Models\Categoria;
+use App\Models\CodigoProveedor;
 use App\Models\OdooProducto;
 use App\Services\Matcher;
 use App\Services\OdooClient;
@@ -22,6 +23,8 @@ class RevisarCarga extends Component
     use WithPagination;
 
     private const VERDES = ['barcode', 'mapeo', 'codigo', 'manual', 'categoria'];
+    /** no se encontraron por código de barras ni referencia: hay que revisarlos a mano */
+    private const PENDIENTES = ['nombre', 'parecido', 'ninguno'];
 
     public Carga $carga;
     public string $filtro = 'todos';     // todos (sin los grises) | verde | amarillo | naranja | gris | rojo
@@ -39,6 +42,8 @@ class RevisarCarga extends Component
     // buscador manual de producto
     public ?int $buscandoItem = null;
     public string $busqueda = '';
+    public string $guardarCodigo = '';   // '' | proveedor | referencia
+    public bool $recorriendo = false;    // al asociar o saltear pasa al siguiente sin encontrar
 
     public ?string $mensaje = null;
     public ?string $error = null;
@@ -159,27 +164,64 @@ class RevisarCarga extends Component
     public function elegir(int $id, int $productoId): void
     {
         if (!$this->editable()) return;
-        $this->proc()->elegir($this->item($id), $productoId);
+        $guardar = $this->buscandoItem === $id ? ($this->guardarCodigo ?: null) : null;
+        $this->proc()->elegir($this->item($id), $productoId, $guardar);
+        $this->recorriendo ? $this->siguiente() : $this->cerrarBuscador();
+    }
+
+    /** "No hacer nada" con este renglón: no se actualiza y la próxima lista ya viene ignorado. */
+    public function ignorar(int $id): void
+    {
+        if (!$this->editable()) return;
+        $this->proc()->ignorar($this->item($id));
+        if ($this->buscandoItem === $id) {
+            $this->recorriendo ? $this->siguiente() : $this->cerrarBuscador();
+        }
+    }
+
+    /** Abre el buscador con el primer renglón que no se encontró por código y va pasando de a uno. */
+    public function recorrer(): void
+    {
+        $this->recorriendo = true;
         $this->buscandoItem = null;
-        $this->busqueda = '';
+        $this->siguiente();
+    }
+
+    /** Siguiente renglón sin encontrar (sin cambiar el actual). */
+    public function siguiente(): void
+    {
+        $fila = $this->buscandoItem ? $this->item($this->buscandoItem)->fila : 0;
+        $q = fn () => $this->carga->items()->whereIn('match', self::PENDIENTES)->whereNull('odoo_product_id')->orderBy('fila');
+        $sig = $q()->where('fila', '>', $fila)->first() ?? $q()->where('id', '!=', $this->buscandoItem ?? 0)->first();
+        if (!$sig) {
+            $this->cerrarBuscador();
+            $this->mensaje = 'No quedan productos sin encontrar.';
+            return;
+        }
+        $this->abrirBuscador($sig->id);
     }
 
     public function quitar(int $id): void
     {
         if (!$this->editable()) return;
-        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'costo_anterior' => null, 'precio_anterior' => null]);
+        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null]);
     }
 
     public function abrirBuscador(int $id): void
     {
+        $it = $this->item($id);
         $this->buscandoItem = $id;
-        $this->busqueda = (string) $this->item($id)->nombre;
+        $this->busqueda = (string) $it->nombre;
+        // por defecto se guarda el código del proveedor, así la próxima lista lo encuentra sola
+        $this->guardarCodigo = $it->guardar_codigo ?? ($it->codigo && $this->carga->proveedor?->odoo_partner_id ? 'proveedor' : '');
     }
 
     public function cerrarBuscador(): void
     {
         $this->buscandoItem = null;
         $this->busqueda = '';
+        $this->guardarCodigo = '';
+        $this->recorriendo = false;
     }
 
     public function aplicar(): void
@@ -205,10 +247,10 @@ class RevisarCarga extends Component
             'verde'    => $q->whereIn('match', self::VERDES),
             'amarillo' => $q->where('match', 'nombre'),
             'naranja'  => $q->where('match', 'parecido'),
-            'gris'     => $q->where('match', 'ninguno'),
+            'gris'     => $q->whereIn('match', ['ninguno', 'ignorado']),
             'rojo'     => $q->whereNotNull('costo_anterior')->where('costo_anterior', '>', 0)
                             ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > 0.30'),
-            default    => $q->where('match', '!=', 'ninguno'),   // los grises son productos que no vende
+            default    => $q->whereNotIn('match', ['ninguno', 'ignorado']),   // los grises son productos que no vende
         };
     }
 
@@ -217,29 +259,30 @@ class RevisarCarga extends Component
         $txt = trim($this->busqueda);
         if (mb_strlen($txt) < 2) return [];
 
-        $q = OdooProducto::query();
-        if (preg_match('/^\d{6,14}$/', $txt)) {
-            $q->where('barcode', $txt)->orWhere('default_code', $txt);
-        } else {
-            // por nombre, o por la referencia interna tal cual ("LS-9")
-            $q->where(function ($w) use ($txt) {
-                foreach (Matcher::tokens(Matcher::normalizar($txt)) as $t) {
-                    $w->where('nombre_norm', 'like', '%' . $t . '%');
-                }
-            })->orWhere('default_code', $txt);
-        }
-        return $q->orderBy('nombre')->limit(15)->get(['id', 'nombre', 'barcode', 'costo', 'precio'])->toArray();
+        // por nombre, código de barras, referencia interna o código de cualquier proveedor
+        $q = OdooProducto::query()->where(function ($w) use ($txt) {
+            if ($tokens = Matcher::tokens(Matcher::normalizar($txt))) {
+                $w->where(function ($n) use ($tokens) {
+                    foreach ($tokens as $t) $n->where('nombre_norm', 'like', '%' . $t . '%');
+                });
+            }
+            $w->orWhere('barcode', $txt)->orWhere('default_code', 'like', $txt . '%');
+            if ($k = Matcher::codigoClave($txt)) {
+                $w->orWhereIn('id', CodigoProveedor::where('codigo', $k)->select('product_id'));
+            }
+        });
+        return $q->orderBy('nombre')->limit(20)->get(['id', 'nombre', 'barcode', 'default_code', 'costo', 'precio'])->toArray();
     }
 
     public function render()
     {
         $base = $this->carga->items();
         $conteo = [
-            'todos'    => (clone $base)->where('match', '!=', 'ninguno')->count(),
+            'todos'    => (clone $base)->whereNotIn('match', ['ninguno', 'ignorado'])->count(),
             'verde'    => (clone $base)->whereIn('match', self::VERDES)->count(),
             'amarillo' => (clone $base)->where('match', 'nombre')->count(),
             'naranja'  => (clone $base)->where('match', 'parecido')->count(),
-            'gris'     => (clone $base)->where('match', 'ninguno')->count(),
+            'gris'     => (clone $base)->whereIn('match', ['ninguno', 'ignorado'])->count(),
             'rojo'     => $this->filtrarCon('rojo')->count(),
         ];
 
@@ -262,6 +305,9 @@ class RevisarCarga extends Component
             'seleccionados'=> (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->count(),
             'conStock'     => (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->where('cantidad', '>', 0)->count(),
             'resultados'   => $this->buscandoItem ? $this->resultadosBusqueda() : [],
+            'buscando'     => $this->buscandoItem ? $this->item($this->buscandoItem) : null,
+            'pendientes'   => $this->editable() ? (clone $base)->whereIn('match', self::PENDIENTES)->whereNull('odoo_product_id')->count() : 0,
+            'conPartner'   => (bool) $this->carga->proveedor?->odoo_partner_id,
             'editable'     => $this->editable(),
         ]);
     }

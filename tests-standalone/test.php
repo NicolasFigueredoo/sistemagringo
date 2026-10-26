@@ -53,6 +53,10 @@ ok(($r['candidatos'][0]['id'] ?? $r['odoo_product_id']) === 5, "tornillo 6x35 ->
 
 $r = $mt->buscar(null, 'CIN-48', 'CINTA EMBALAR');
 ok($r['match'] === 'mapeo' && $r['odoo_product_id'] === 6, "asociación guardada -> verde");
+$r = (new Matcher($catalogo, ['c:XX-1' => Matcher::IGNORAR]))->buscar('7790001000024', 'XX-1', 'PALO DE ESCOBA');
+ok($r['match'] === 'barcode', "el código de barras gana a un 'no hacer nada' viejo");
+$r = (new Matcher($catalogo, ['c:XX-1' => Matcher::IGNORAR]))->buscar(null, 'XX-1', 'Escoba Plástica Reforzada');
+ok($r['match'] === 'ignorado' && $r['odoo_product_id'] === null, "'no hacer nada' guardado -> ignorado");
 
 $r = $mt->buscar(null, null, 'MARTILLO GALPONERO');
 ok($r['match'] === 'ninguno', "sin nada parecido -> gris");

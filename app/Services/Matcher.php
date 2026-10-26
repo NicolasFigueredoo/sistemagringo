@@ -14,13 +14,17 @@ namespace App\Services;
  *                   o código suelto que coincide (descripción, otras columnas, código corto)
  *   5. parecido  -> hasta 3 candidatos para elegir           (hay que elegir)
  *   6. ninguno
+ *   (ignorado -> la última vez se eligió "no hacer nada" para ese renglón)
  *
  * Nunca asocia automáticamente por nombre parecido: "ESCOBA" jamás va solo a "PALO DE ESCOBA".
  * Sin dependencias de Laravel: recibe el catálogo como array.
  */
 class Matcher
 {
-    private const STOP = ['de', 'del', 'la', 'el', 'los', 'las', 'x', 'c', 'p', 'con', 'para', 'y', 'en', 'un', 'una', 'mm', 'cm', 'mts', 'mt', 'm', 'u', 'un', 'unid', 'uds'];
+    /** odoo_product_id de un mapeo que significa "este renglón no se usa" */
+    public const IGNORAR = 0;
+
+    private const STOP =['de', 'del', 'la', 'el', 'los', 'las', 'x', 'c', 'p', 'con', 'para', 'y', 'en', 'un', 'una', 'mm', 'cm', 'mts', 'mt', 'm', 'u', 'un', 'unid', 'uds'];
 
     /** @var array<string,int> barcode => id */
     private array $porBarcode = [];
@@ -84,8 +88,11 @@ class Matcher
             }
         }
 
-        // 2. asociación guardada
+        // 2. asociación guardada (0 = la última vez se marcó "no hacer nada")
         foreach (self::claves($barcode, $codigo, $nombre) as $clave) {
+            if (($this->mapeos[$clave] ?? null) === self::IGNORAR) {
+                return ['match' => 'ignorado', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => []];
+            }
             if (isset($this->mapeos[$clave]) && isset($this->productos[$this->mapeos[$clave]])) {
                 return $this->resultado('mapeo', $this->mapeos[$clave]);
             }
