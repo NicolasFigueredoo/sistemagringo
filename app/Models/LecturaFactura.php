@@ -9,6 +9,12 @@ class LecturaFactura extends Model
     protected $table = 'lecturas_factura';
     protected $guarded = [];
 
+    /** Siempre en la base principal, también desde las pantallas del Odoo viejo. */
+    public function getConnectionName()
+    {
+        return config('database.principal') ?? parent::getConnectionName();
+    }
+
     /** Lecturas hechas en el mes actual (las que cuentan para el tope). */
     public static function delMes(): int
     {

@@ -49,15 +49,15 @@
                     <td class="!align-middle">
                         <div class="flex justify-end gap-2">
                             @if($c->estado === 'revision')
-                                <a href="{{ route('revisar', $c) }}" class="btn-primary px-3 py-1.5 text-xs">Continuar</a>
+                                <a href="{{ \App\Support\Instancia::ruta('revisar', $c) }}" class="btn-primary px-3 py-1.5 text-xs">Continuar</a>
                                 <button wire:click="eliminar({{ $c->id }})" wire:confirm="¿Borrar esta carga? No modifica Odoo." class="btn-ghost px-3 py-1.5 text-xs">Borrar</button>
                             @elseif($c->estado === 'aplicada')
-                                <a href="{{ route('revisar', $c) }}" class="btn-secondary px-3 py-1.5 text-xs">Ver</a>
+                                <a href="{{ \App\Support\Instancia::ruta('revisar', $c) }}" class="btn-secondary px-3 py-1.5 text-xs">Ver</a>
                                 <button wire:click="deshacer({{ $c->id }})"
                                         wire:confirm="Se van a restaurar en Odoo los precios que había antes de esta carga. ¿Confirmás?"
                                         class="btn-danger px-3 py-1.5 text-xs"><x-icon name="undo" class="h-3.5 w-3.5" /> Deshacer</button>
                             @else
-                                <a href="{{ route('revisar', $c) }}" class="btn-secondary px-3 py-1.5 text-xs">Ver</a>
+                                <a href="{{ \App\Support\Instancia::ruta('revisar', $c) }}" class="btn-secondary px-3 py-1.5 text-xs">Ver</a>
                             @endif
                         </div>
                     </td>

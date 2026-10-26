@@ -66,6 +66,11 @@ if (-not (Test-Path database\database.sqlite)) { New-Item database\database.sqli
 php artisan migrate --force --no-interaction
 if ($LASTEXITCODE -ne 0) { throw "Fallo la migracion." }
 Ok "Base SQLite lista (database\database.sqlite)"
+# Odoo viejo (facturas por foto): su propia base
+if (-not (Test-Path database\viejo.sqlite)) { New-Item database\viejo.sqlite -ItemType File | Out-Null }
+php artisan migrate --database=sqlite_viejo --force --no-interaction
+if ($LASTEXITCODE -ne 0) { throw "Fallo la migracion de la base del Odoo viejo." }
+Ok "Base del Odoo viejo lista (database\viejo.sqlite)"
 
 # ---------------------------------------------------------------- pdftotext
 Paso "Lector de PDF (pdftotext)"

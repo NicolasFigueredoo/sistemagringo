@@ -7,19 +7,26 @@
 </head>
 <body class="min-h-full">
     @php
-        $nav = [
+        $viejo = \App\Support\Instancia::esViejo();
+        $nav = $viejo ? [
+            ['viejo.subir.factura', 'Cargar factura', 'camera', ['viejo.subir.factura', 'viejo.revisar']],
+            ['viejo.historial', 'Historial', 'clock', ['viejo.historial']],
+            ['subir', 'Volver al Odoo nuevo', 'undo', []],
+        ] : [
             ['subir', 'Cargar lista', 'file', ['subir', 'subir.factura', 'revisar']],
             ['costos', 'Costos', 'check', ['costos']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
             ['reajustar', 'Reajustar', 'zap', ['reajustar']],
+            ['viejo.subir.factura', 'Odoo viejo', 'camera', []],
         ];
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div class="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4 sm:px-6">
-            <a href="{{ route('subir') }}" class="flex items-center gap-2.5">
+            <a href="{{ route($viejo ? 'viejo.subir.factura' : 'subir') }}" class="flex items-center gap-2.5">
                 <span class="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-xs font-bold tracking-tight text-white">TG</span>
                 <span class="hidden text-sm font-semibold text-slate-900 sm:block">Tío Gringo <span class="font-normal text-slate-400">/ Precios</span></span>
+                @if($viejo)<span class="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-600/20">ODOO VIEJO</span>@endif
             </a>
 
             <nav class="flex flex-1 items-center gap-1 overflow-x-auto">

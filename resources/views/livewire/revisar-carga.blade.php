@@ -22,7 +22,7 @@
 
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-            <a href="{{ route('historial') }}" class="text-xs font-medium text-slate-500 hover:text-slate-700">Historial</a>
+            <a href="{{ \App\Support\Instancia::ruta('historial') }}" class="text-xs font-medium text-slate-500 hover:text-slate-700">Historial</a>
             <span class="text-xs text-slate-300">/</span>
             <span class="text-xs text-slate-500">Revisión</span>
             <h1 class="page-title mt-1">{{ $carga->titulo }}</h1>
@@ -102,12 +102,12 @@
                 <span class="label">Factura</span>
                 <div class="flex flex-wrap gap-2">
                     @foreach($carga->fotos as $n => $ruta)
-                        <a href="{{ route('carga.foto', [$carga, $n]) }}" target="_blank" title="Ver hoja {{ $n + 1 }}"
+                        <a href="{{ \App\Support\Instancia::ruta('carga.foto', [$carga, $n]) }}" target="_blank" title="Ver hoja {{ $n + 1 }}"
                            class="relative block h-20 w-16 overflow-hidden rounded-md border border-slate-200 bg-slate-100 hover:border-brand-500">
                             @if(str_ends_with(strtolower($ruta), '.pdf'))
                                 <span class="flex h-full items-center justify-center"><x-icon name="file" class="h-5 w-5 text-slate-400" /></span>
                             @else
-                                <img src="{{ route('carga.foto', [$carga, $n]) }}" alt="Hoja {{ $n + 1 }}" class="h-full w-full object-cover">
+                                <img src="{{ \App\Support\Instancia::ruta('carga.foto', [$carga, $n]) }}" alt="Hoja {{ $n + 1 }}" class="h-full w-full object-cover">
                             @endif
                             <span class="absolute left-1 top-1 rounded bg-slate-900/70 px-1 text-[10px] font-medium text-white">{{ $n + 1 }}</span>
                         </a>

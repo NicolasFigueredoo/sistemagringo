@@ -12,6 +12,7 @@ use App\Services\Matcher;
 use App\Services\OdooClient;
 use App\Services\Precios;
 use App\Services\Procesador;
+use App\Support\Instancia;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -230,7 +231,7 @@ class RevisarCarga extends Component
     {
         if (!$this->editable()) return;
         $this->proc()->iniciarAplicacion($this->carga);
-        AplicarCarga::dispatch($this->carga->id);
+        AplicarCarga::dispatch($this->carga->id, Instancia::esViejo());
         $this->carga->refresh();
         $this->mensaje = $this->error = null;
     }

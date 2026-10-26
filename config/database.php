@@ -45,6 +45,20 @@ return [
             'transaction_mode' => 'DEFERRED',
         ],
 
+        // Odoo viejo (pantallas /viejo): su propio catálogo, proveedores e historial
+        'sqlite_viejo' => [
+            'driver' => 'sqlite',
+            'url' => null,
+            'database' => env('DB_VIEJO_DATABASE', database_path('viejo.sqlite')),
+            'prefix' => '',
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
+            // WAL: se puede leer mientras otra pantalla está escribiendo (evita "database is locked")
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 15000),
+            'journal_mode' => env('DB_JOURNAL_MODE', 'wal'),
+            'synchronous' => env('DB_SYNCHRONOUS', 'normal'),
+            'transaction_mode' => 'DEFERRED',
+        ],
+
         'mysql' => [
             'driver' => 'mysql',
             'url' => env('DB_URL'),

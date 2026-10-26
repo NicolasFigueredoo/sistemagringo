@@ -2,7 +2,9 @@
 
 namespace App\Providers;
 
+use App\Http\Middleware\OdooViejo;
 use Illuminate\Support\ServiceProvider;
+use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -19,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // los pedidos de Livewire de una pantalla /viejo también van contra el Odoo viejo
+        Livewire::addPersistentMiddleware([OdooViejo::class]);
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Proveedor;
 use App\Services\LectorFactura;
 use App\Services\Matcher;
 use App\Services\OdooClient;
+use App\Support\Instancia;
 use App\Services\Procesador;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
@@ -126,7 +127,7 @@ class SubirFactura extends Component
             return;
         }
 
-        return $this->redirectRoute('revisar', $carga, navigate: false);
+        return $this->redirectRoute(Instancia::nombreRuta('revisar'), $carga, navigate: false);
     }
 
     /** Proveedor cuyo nombre se parece al que figura en la factura ("FERRETERA DEL SUR S.A." ~ "Ferretera del Sur"). */

@@ -13,6 +13,12 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
+    /** Siempre en la base principal, también desde las pantallas del Odoo viejo. */
+    public function getConnectionName()
+    {
+        return config('database.principal') ?? parent::getConnectionName();
+    }
+
     /**
      * The attributes that are mass assignable.
      *

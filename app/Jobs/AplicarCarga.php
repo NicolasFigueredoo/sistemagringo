@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Carga;
 use App\Services\OdooClient;
 use App\Services\Procesador;
+use App\Support\Instancia;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -20,9 +21,20 @@ class AplicarCarga implements ShouldQueue
     public int $timeout = 3600;
     public int $tries = 1;
 
-    public function __construct(public int $cargaId) {}
+    public function __construct(public int $cargaId, public bool $viejo = false) {}
 
     public function handle(): void
+    {
+        // el mismo proceso de la cola atiende a los dos Odoo: cada tarea elige el suyo y al terminar vuelve al nuevo
+        Instancia::usar($this->viejo);
+        try {
+            $this->aplicar();
+        } finally {
+            Instancia::usar(false);
+        }
+    }
+
+    private function aplicar(): void
     {
         $proc = new Procesador(OdooClient::desdeConfig());
         do {

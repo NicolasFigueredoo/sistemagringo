@@ -11,7 +11,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Odoo viejo: cambiar de base antes de buscar la carga de la dirección (/viejo/carga/{carga})
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            prepend: \App\Http\Middleware\OdooViejo::class,
+        );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
