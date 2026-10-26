@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Jobs\AplicarCarga;
 use App\Models\Carga;
 use App\Models\CargaItem;
 use App\Models\Categoria;
@@ -224,17 +225,38 @@ class RevisarCarga extends Component
         $this->recorriendo = false;
     }
 
+    /** Arranca la actualización en segundo plano; la pantalla muestra el avance con progreso(). */
     public function aplicar(): void
     {
         if (!$this->editable()) return;
-        try {
-            [$ok, $errores] = $this->proc()->aplicar($this->carga);
+        $this->proc()->iniciarAplicacion($this->carga);
+        AplicarCarga::dispatch($this->carga->id);
+        $this->carga->refresh();
+        $this->mensaje = $this->error = null;
+    }
+
+    /**
+     * Lo llama la pantalla cada pocos segundos mientras se actualiza.
+     * Si el proceso en segundo plano no avanza (no está corriendo o se cortó), sigue la pantalla misma de a una tanda.
+     */
+    public function progreso(): void
+    {
+        $this->carga->refresh();
+        if ($this->carga->estado === 'aplicando' && $this->carga->updated_at->lt(now()->subSeconds(20))) {
+            try {
+                AplicarCarga::tanda($this->proc(), $this->carga);
+            } catch (\Throwable $e) {
+                report($e);
+                $this->error = 'Se cortó la conexión con Odoo, se reintenta solo: ' . $e->getMessage();
+                $this->carga->touch();   // esperar otros 20 segundos antes de reintentar
+            }
             $this->carga->refresh();
-            $this->mensaje = "Listo: se actualizaron $ok productos en Odoo." . ($errores ? " $errores con error (marcados en rojo)." : '');
+        }
+        if ($this->carga->estado === 'aplicada') {
+            $ok = $this->carga->progreso_hecho - $this->carga->progreso_errores;
+            $err = $this->carga->progreso_errores;
+            $this->mensaje = "Listo: se actualizaron $ok productos en Odoo." . ($err ? " $err con error (marcados en rojo, filtro \"Todos\")." : '');
             $this->error = null;
-        } catch (\Throwable $e) {
-            report($e);
-            $this->error = 'No se pudo actualizar Odoo: ' . $e->getMessage();
         }
     }
 

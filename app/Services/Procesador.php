@@ -560,11 +560,43 @@ class Procesador
         ]);
     }
 
-    /** Escribe en Odoo. Devuelve [ok, errores]. */
+    /** Escribe en Odoo de una sola vez (consola). En la pantalla se hace por tandas con iniciarAplicacion + aplicarTanda. Devuelve [ok, errores]. */
     public function aplicar(Carga $carga): array
     {
         @set_time_limit(0);
-        $items = $carga->items()->where('seleccionado', true)->where('aplicado', false)->whereNotNull('odoo_product_id')->get();
+        $this->iniciarAplicacion($carga);
+        while ($this->aplicarTanda($carga) > 0);
+        $carga->refresh();
+        return [$carga->progreso_hecho - $carga->progreso_errores, $carga->progreso_errores];
+    }
+
+    private function pendientes(Carga $carga)
+    {
+        return $carga->items()->where('seleccionado', true)->where('aplicado', false)->whereNotNull('odoo_product_id');
+    }
+
+    /** Deja la carga "aplicando" con el total a procesar. Las tandas las corre el job AplicarCarga. Devuelve el total. */
+    public function iniciarAplicacion(Carga $carga): int
+    {
+        $this->pendientes($carga)->update(['error' => null]);   // los que fallaron antes se reintentan
+        $total = $this->pendientes($carga)->count();
+        $carga->update(['estado' => 'aplicando', 'progreso_total' => $total, 'progreso_hecho' => 0, 'progreso_errores' => 0]);
+        return $total;
+    }
+
+    /**
+     * Escribe en Odoo la próxima tanda y la marca como aplicada enseguida: si el proceso se corta,
+     * lo ya escrito queda registrado y se sigue desde ahí. Devuelve cuántos procesó (0 = terminó).
+     */
+    public function aplicarTanda(Carga $carga, int $tamano = 50): int
+    {
+        @set_time_limit(0);
+        // los que dieron error en esta pasada quedan con el mensaje y no se vuelven a tomar
+        $items = $this->pendientes($carga)->whereNull('error')->orderBy('id')->limit($tamano)->get();
+        if ($items->isEmpty()) {
+            $this->terminarAplicacion($carga);
+            return 0;
+        }
 
         // refrescar "anterior" justo antes de escribir, para que Deshacer sea exacto
         $this->refrescarAnteriores($items);
@@ -610,6 +642,18 @@ class Procesador
                     }
                 }
             }
+            $carga->update([
+                'progreso_hecho'   => $carga->progreso_hecho + $items->count(),
+                'progreso_errores' => $carga->progreso_errores + count($errores),
+            ]);
+        });
+
+        return $items->count();
+    }
+
+    private function terminarAplicacion(Carga $carga): void
+    {
+        DB::transaction(function () use ($carga) {
             // "no hacer nada" también se recuerda
             foreach ($carga->items()->where('match', 'ignorado')->get() as $it) {
                 foreach (Matcher::claves($it->barcode, $it->codigo, $it->nombre) as $clave) {
@@ -621,8 +665,6 @@ class Procesador
             }
             $carga->update(['estado' => 'aplicada', 'aplicada_at' => now()]);
         });
-
-        return [$items->count() - count($errores), count($errores)];
     }
 
     /**

@@ -39,6 +39,8 @@
                         @elseif($c->estado === 'aplicada')
                             <span class="badge-green"><span class="dot bg-emerald-500"></span>{{ $c->aplicados_count }} actualizados</span>
                             <div class="mt-0.5 text-xs text-slate-400">{{ $c->aplicada_at?->format('d/m H:i') }}</div>
+                        @elseif($c->estado === 'aplicando')
+                            <span class="badge-blue"><span class="dot bg-brand-500"></span>Actualizando {{ $c->progreso_hecho }} de {{ $c->progreso_total }}</span>
                         @else
                             <span class="badge-gray"><span class="dot bg-slate-400"></span>Deshecha</span>
                             <div class="mt-0.5 text-xs text-slate-400">{{ $c->deshecha_at?->format('d/m H:i') }}</div>

@@ -36,6 +36,8 @@
         </div>
         @if($carga->estado === 'aplicada')
             <span class="badge-green px-3 py-1 text-sm"><x-icon name="check" class="h-3.5 w-3.5" /> Aplicada en Odoo</span>
+        @elseif($carga->estado === 'aplicando')
+            <span class="badge-blue px-3 py-1 text-sm">Actualizando en Odoo…</span>
         @elseif($carga->estado === 'deshecha')
             <span class="badge-gray px-3 py-1 text-sm"><x-icon name="undo" class="h-3.5 w-3.5" /> Deshecha</span>
         @else
@@ -48,6 +50,24 @@
     @endif
     @if($error)
         <div class="alert-error"><x-icon name="alert" class="mt-0.5 h-4 w-4 shrink-0" /><span>{{ $error }}</span></div>
+    @endif
+
+    @if($carga->estado === 'aplicando')
+        @php $total = max(1, (int) $carga->progreso_total); $hecho = (int) $carga->progreso_hecho; @endphp
+        <div wire:poll.3s="progreso" class="card px-5 py-4">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <div class="flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <x-icon name="loader" class="h-4 w-4 animate-spin text-brand-600" />
+                    Actualizando en Odoo: {{ number_format($hecho, 0, ',', '.') }} de {{ number_format($carga->progreso_total, 0, ',', '.') }} productos
+                    @if($carga->progreso_errores)<span class="text-xs font-normal text-red-600">· {{ $carga->progreso_errores }} con error</span>@endif
+                </div>
+                <div class="text-sm font-semibold text-slate-900">{{ round($hecho / $total * 100) }}%</div>
+            </div>
+            <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full bg-brand-500 transition-all" style="width: {{ round($hecho / $total * 100) }}%"></div>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">Se hace de a tandas de 50 y cada tanda queda guardada. Si se corta, sigue desde donde quedó.</p>
+        </div>
     @endif
 
     {{-- Resumen --}}
