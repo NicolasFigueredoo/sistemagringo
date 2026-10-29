@@ -132,14 +132,21 @@ class LectorLista
     private static function porRenglon(array $lineas): array
     {
         $u = self::UNIDADES;
-        $cola = '(?:\s{2,}(?<unidad>(?:' . $u . ')\.?|\d{1,5}))?'
-            . '\s+\$?\s*(?<precio>\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?|\d+\.\d{1,2})'
-            . '\s*(?:\*+|NUEVO!?|OFERTA!?|NEW!?)?\s*$/u';
+        // "1.234,56" "1234,56" "1234.56" "1,234.56"
+        $precio = '\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d{1,3}(?:,\d{3})+\.\d{1,2}|\d+(?:,\d{1,2})?|\d+\.\d{1,2}';
+        // lo que a veces viene después del precio: marcas, "c/u", "+IVA", la alícuota "21%"
+        $fin = '(?:\s*(?i:\*+|NUEVO!?|OFERTA!?|NEW!?|C\/U|\+\s*IVA|\d{1,2}(?:[.,]\d{1,2})?\s*%))*\s*$/u';
+        $unidad = '(?:\s{2,}(?<unidad>(?i:' . $u . ')\.?|\d{1,5}))?';
+        $cola = $unidad . '\s+(?:U\$S|USD|\$)?\s*(?<precio>' . $precio . ')' . $fin;
         $regs = [
             // A) código separado de la descripción por 2+ espacios: "SI 140   SOLDADORA INVERTER ..."
             '/^\s*(?<codigo>[A-Z0-9][A-Z0-9.\/ -]{0,19}?)\s{2,}(?<desc>\S.*?)' . $cola,
             // B) código pegado con 1 espacio: "26030 ABRAZADERA DE ACERO ..." (tiene número o es tipo "AD-CDA")
             '/^\s*(?<codigo>[^\s$]*\d[^\s$]*|[A-Z]{1,6}-[A-Z0-9-]{1,10})\s+(?<desc>.+?)' . $cola,
+            // C) sin código: "TORNILLO AUTOPERFORANTE 6X35   $ 1.250,00". El precio tiene que tener
+            //    $ o decimales/miles, así "Página 1 de 3" no se toma como producto
+            '/^\s*(?<codigo>)(?<desc>\pL.*?)' . $unidad
+                . '\s+(?:(?:U\$S|USD|\$)\s*(?<precio>' . $precio . ')|(?<precio2>\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+[.,]\d{2}))' . $fin,
         ];
 
         $filas = [];
@@ -150,7 +157,8 @@ class LectorLista
                 if (preg_match($re, $l, $mm2)) { $m = $mm2; break; }
             }
             if (!$m) continue;
-            $desc = trim(preg_replace('/\s{2,}/', ' ', $m['desc']));
+            if (($m['precio'] ?? '') === '') $m['precio'] = $m['precio2'] ?? '';
+            $desc =trim(preg_replace('/\s{2,}/', ' ', $m['desc']));
             // si la regla A tomó "118003 ARCOMETRO" como código y "UNIDAD" como descripción, probar la B
             if (preg_match('/^(?:' . $u . ')\.?$/i', $desc) && preg_match($regs[1], $l, $mb)) {
                 $m = $mb;

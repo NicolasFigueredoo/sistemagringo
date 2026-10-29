@@ -32,6 +32,8 @@ class Matcher
     private array $porCodigo = [];
     /** @var array<string,int[]> codigoClave(código del proveedor en Odoo) => ids */
     private array $porCodigoProv = [];
+    /** @var array<string,int[]> codigoClave(código de barras corto de Odoo, "1253") => ids */
+    private array $porBarcodeCorto = [];
     /** @var array<string,int[]> nombre_norm => ids */
     private array $porNombre = [];
     /** @var array<string,int[]> token => ids (índice invertido) */
@@ -57,7 +59,7 @@ class Matcher
             if ($b = self::limpiarCodigo($p['barcode'] ?? null)) {
                 $this->porBarcode[$b] = $id;
                 // códigos de barra cortos ("12445") son en realidad códigos internos
-                if (strlen($b) < 8 && ($k = self::codigoClave($b))) $this->porCodigo[$k][] = $id;
+                if (strlen($b) < 8 && ($k = self::codigoClave($b))) $this->porBarcodeCorto[$k][] = $id;
             }
             if ($k = self::codigoClave($p['default_code'] ?? null)) $this->porCodigo[$k][] = $id;
             $this->porNombre[$norm][] = $id;
@@ -108,6 +110,15 @@ class Matcher
         foreach ($principales as $k) {
             // un código corto ("100") puede ser casualidad: se confirma a mano
             if ($id = self::unico($this->porCodigo[$k] ?? [])) return $this->resultado(self::codigoFuerte($k) ? 'codigo' : 'nombre', $id);
+        }
+        foreach ($principales as $k) {
+            // código de barras corto inventado en Odoo ("1253"): otro proveedor puede usar el mismo número
+            // para otra cosa, así que el nombre tiene que parecerse; si no comparte ninguna palabra no se propone
+            if (!($id = self::unico($this->porBarcodeCorto[$k] ?? []))) continue;
+            $p = $this->productos[$id];
+            $score = $norm === '' ? 0.0 : self::similitud(self::tokens($norm), $p['tokens'], $norm, $p['norm']);
+            if ($score >= 0.45) return $this->resultado('codigo', $id);
+            if ($score > 0) return $this->resultado('nombre', $id);
         }
         // "ST00118-POXIPOL": el proveedor le agrega la marca al código; probar cada parte con letras y números
         foreach ([$codigo, $barcode] as $c) {

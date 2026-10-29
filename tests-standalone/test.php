@@ -91,6 +91,12 @@ ok($r['match'] === 'nombre' && $r['odoo_product_id'] === 15, "segundo código pe
 $r = (new Matcher($catCod, [], [['codigo' => 'ABC.990', 'product_id' => 15]], false))->buscar(null, 'ABC990', 'MECHA');
 ok($r['match'] === 'nombre', "código de proveedor sin saber cuál es el proveedor en Odoo -> confirmar");
 
+$mb = new Matcher([['id' => 30, 'nombre' => 'bomba vasser 1/2 hp PERIFERICA N', 'barcode' => '1253', 'default_code' => null]]);
+$r = $mb->buscar(null, '1253', 'LLAVE TERMICA BIPOLAR 25A');
+ok($r['odoo_product_id'] === null, "código de barras corto de Odoo ('1253') con otro nombre -> no se asocia");
+$r = $mb->buscar(null, '1253', 'BOMBA PERIFERICA VASSER 1/2 HP');
+ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 30, "código de barras corto con nombre parecido -> verde");
+
 $mp = new Matcher([['id' => 20, 'nombre' => 'POXIPOL gris 108G/70ML 10 MIN', 'barcode' => null, 'default_code' => 'ST00118']]);
 $r = $mp->buscar(null, 'ST00118-POXIPOL', 'Met. 10 MIN. 108G / 70ML');
 ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 20, "código con la marca pegada ('ST00118-POXIPOL' = 'ST00118') -> verde");
@@ -110,8 +116,9 @@ $escoba = $filas[0];
 ok($escoba[0] === '7790001000017' && $escoba[1] === 'ESC-01', "EAN + código del proveedor separados");
 
 echo "CSV:\n";
-file_put_contents('/tmp/claude-0/l.csv', "Codigo;Descripcion;Precio\nA1;Escoba plastica reforzada;1.500,00\n");
-$f = LectorLista::leer('/tmp/claude-0/l.csv');
+$csv = sys_get_temp_dir() . '/l.csv';
+file_put_contents($csv, "Codigo;Descripcion;Precio\nA1;Escoba plastica reforzada;1.500,00\n");
+$f = LectorLista::leer($csv);
 $cc = LectorLista::detectarColumnas($f);
 ok($cc['col_precio'] === 2 && $cc['col_nombre'] === 1 && $cc['fila_inicio'] === 2, "CSV con ; detectado: " . json_encode($cc));
 
