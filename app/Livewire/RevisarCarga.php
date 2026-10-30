@@ -337,6 +337,8 @@ class RevisarCarga extends Component
             'resultados'   => $this->buscandoItem ? $this->resultadosBusqueda() : [],
             'buscando'     => $this->buscandoItem ? $this->item($this->buscandoItem) : null,
             'pendientes'   => $this->editable() ? (clone $base)->whereIn('match', self::PENDIENTES)->whereNull('odoo_product_id')->count() : 0,
+            'sospechosos'  => $this->editable() ? (clone $base)->where('seleccionado', false)->whereNotNull('odoo_product_id')->where('costo_anterior', '>', 0)
+                                ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > ' . Procesador::CAMBIO_SOSPECHOSO)->count() : 0,
             'conPartner'   => (bool) $this->carga->proveedor?->odoo_partner_id,
             'editable'     => $this->editable(),
         ]);

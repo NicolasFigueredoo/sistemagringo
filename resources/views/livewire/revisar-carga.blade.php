@@ -200,6 +200,14 @@
         @endif
     </div>
 
+    @if($sospechosos > 0)
+        <div class="alert-error items-center">
+            <x-icon name="alert" class="h-4 w-4 shrink-0" />
+            <span class="flex-1"><b>{{ number_format($sospechosos, 0, ',', '.') }}</b> productos cambian el costo más de 50% y quedaron <b>sin marcar</b>: puede ser un precio mal leído. Comparalos con la lista y marcá los que estén bien.</span>
+            <button wire:click="$set('filtro', 'rojo')" class="btn-secondary shrink-0 px-3 py-1.5 text-xs">Ver cuáles</button>
+        </div>
+    @endif
+
     @if($pendientes > 0)
         <div class="alert-info items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />

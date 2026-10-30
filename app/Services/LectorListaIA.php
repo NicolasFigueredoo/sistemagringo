@@ -117,13 +117,50 @@ class LectorListaIA
                 'fallbacks'     => 'default',
             ]), array_keys($tramos), $tramos));
 
-        return array_map(function ($resp) {
+        $res = [];
+        foreach ($resps as $i => $resp) {
             try {
-                return $this->respuesta($resp);
+                $res[$i] = self::verificarPrecios($this->respuesta($resp), $tramos[$i]);
             } catch (\Throwable $e) {
-                return $e;
+                $res[$i] = $e;
             }
-        }, $resps);
+        }
+        return $res;
+    }
+
+    /**
+     * La IA a veces le pone a un producto el precio del de al lado (listas con código, descripción y marca en renglones
+     * separados). Si el renglón del PDF donde está su código tiene importes, los precios tienen que salir de ahí:
+     * si no coinciden, se usan los de ese renglón.
+     */
+    public static function verificarPrecios(array $datos, string $tramo): array
+    {
+        $lineas = preg_split('/\r\n|\n|\r/', $tramo);
+        foreach ($datos['items'] ?? [] as $k => $it) {
+            $linea = self::lineaDelCodigo($lineas, (string) ($it['codigo_barras'] ?? ''))
+                ?? self::lineaDelCodigo($lineas, (string) ($it['codigo'] ?? ''));
+            if ($linea === null) continue;
+
+            // importes con centavos ("5.270,00", "$ 1.234,5"): así no se confunden con stock, unidades o el código
+            preg_match_all('/(?<![\d.,])\d{1,3}(?:\.\d{3})*,\d{1,2}(?![\d,])|(?<![\d.,])\d+,\d{1,2}(?![\d,])/', $linea, $m);
+            $enRenglon = array_map(fn ($v) => (float) str_replace(['.', ','], ['', '.'], $v), $m[0]);
+            if (!$enRenglon) continue;
+
+            $precios = array_values(array_filter((array) ($it['precios'] ?? []), 'is_numeric'));
+            $estan = $precios && !array_filter($precios, fn ($p) => !array_filter($enRenglon, fn ($r) => abs($r - $p) < 0.015));
+            if (!$estan) $datos['items'][$k]['precios'] = $enRenglon;
+        }
+        return $datos;
+    }
+
+    /** El único renglón del tramo que tiene el código como palabra suelta (si está en varios, no se sabe cuál es). */
+    private static function lineaDelCodigo(array $lineas, string $codigo): ?string
+    {
+        $codigo = trim($codigo);
+        if (mb_strlen($codigo) < 4) return null;
+        $patron = '/(?<![\p{L}\p{N}])' . preg_quote($codigo, '/') . '(?![\p{L}\p{N}])/iu';
+        $hay = array_values(array_filter($lineas, fn ($l) => preg_match($patron, $l)));
+        return count($hay) === 1 ? $hay[0] : null;
     }
 
     private function respuesta($resp): array

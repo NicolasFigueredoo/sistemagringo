@@ -318,8 +318,14 @@ class Procesador
         // categoría de cada producto encontrado + cuentas
         $this->aplicarReglas($carga);
         $this->traerPreciosActuales($carga);
+        // costo que cambia más de 50%: casi siempre es un precio mal leído; queda sin marcar para revisarlo
+        $carga->items()->where('costo_anterior', '>', 0)
+            ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > ' . self::CAMBIO_SOSPECHOSO)
+            ->update(['seleccionado' => false]);
         return $carga;
     }
+
+    public const CAMBIO_SOSPECHOSO = 0.5;
 
     /**
      * Arma una carga para revisar con los productos de la categoría (o de todas las que tienen ganancia, si $cat es null):
