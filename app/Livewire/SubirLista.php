@@ -117,7 +117,7 @@ class SubirLista extends Component
             // PDF con IA: un tramo por pedido (seguirLeyendo), así ningún pedido pasa el límite del servidor
             if (strtolower($f['ext']) === 'pdf' && LectorListaIA::disponible() && !LectorLista::yaLeida($f['ruta'], 'pdf')) {
                 $tramos = LectorListaIA::tramos(LectorLista::textoPdf($f['ruta']), LectorListaIA::TRAMO_WEB);
-                Cache::put($this->claveLectura($f), ['tramos' => $tramos, 'respuestas' => []], now()->addHours(3));
+                Cache::put($this->claveLectura($f), ['tramos' => $tramos, 'respuestas' => [], 'fallos' => 0], now()->addHours(3));
                 $this->leyendoIA = ['hecho' => 0, 'total' => count($tramos)];
                 $this->preview = [];
                 $this->aviso = null;
@@ -144,14 +144,21 @@ class SubirLista extends Component
             return;
         }
 
+        // varios tramos a la vez; el que falla se reintenta en la vuelta siguiente (hasta 4 fallas en total)
         $falla = null;
         try {
             @set_time_limit(0);
-            $estado['respuestas'][] = LectorListaIA::desdeConfig()->pedir($estado['tramos'][count($estado['respuestas'])]);
+            $pendientes = array_slice(array_diff_key($estado['tramos'], $estado['respuestas']), 0, LectorListaIA::A_LA_VEZ, true);
+            foreach (LectorListaIA::desdeConfig()->intentarVarios($pendientes) as $i => $r) {
+                if (!$r instanceof \Throwable) { $estado['respuestas'][$i] = $r; continue; }
+                report($r);
+                $estado['fallos'] = ($estado['fallos'] ?? 0) + 1;
+                if ($estado['fallos'] > 4) throw $r;
+            }
         } catch (\Throwable $e) {
-            report($e);
             $falla = 'No se pudo leer con IA (' . $e->getMessage() . '); se leyó sin IA, revisá los renglones.';
         }
+        ksort($estado['respuestas']);
 
         if (!$falla && count($estado['respuestas']) < count($estado['tramos'])) {
             Cache::put($clave, $estado, now()->addHours(3));

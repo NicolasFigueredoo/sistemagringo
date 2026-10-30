@@ -117,8 +117,9 @@
             @endif
         </div>
     </section>
-    @elseif($editable)
+    @elseif($editable && (!$carga->solo_costo || $categorias->count()))
     <section class="card">
+        @unless($carga->solo_costo)
         <div class="card-body flex flex-wrap items-end gap-6">
             <div>
                 <span class="label">Ganancia para todos</span>
@@ -138,11 +139,12 @@
             </label>
             @endunless
         </div>
+        @endunless
 
         @if($categorias->count())
-        <div class="border-t border-slate-200" x-data="{ abierto: false }">
+        <div class="{{ $carga->solo_costo ? '' : 'border-t border-slate-200' }}" x-data="{ abierto: false }">
             <button type="button" @click="abierto = !abierto" class="flex w-full items-center justify-between px-5 py-3 text-left hover:bg-slate-50">
-                <span class="text-sm font-medium text-slate-700">Ganancia y descuento por categoría <span class="font-normal text-slate-400">· {{ $categorias->count() }} categorías</span></span>
+                <span class="text-sm font-medium text-slate-700">{{ $carga->solo_costo ? 'Descuento por categoría' : 'Ganancia y descuento por categoría' }} <span class="font-normal text-slate-400">· {{ $categorias->count() }} categorías</span></span>
                 <x-icon name="chevron-down" class="h-4 w-4 text-slate-400 transition-transform" x-bind:class="abierto && 'rotate-180'" />
             </button>
             <div x-show="abierto" x-cloak class="border-t border-slate-100">
@@ -154,9 +156,11 @@
                                 <div class="text-sm font-medium text-slate-900">{{ $cat->nombre }}</div>
                                 <div class="text-xs text-slate-500">{{ $cat->cant }} productos</div>
                             </div>
+                            @unless($carga->solo_costo)
                             <label class="flex items-center gap-2 text-xs text-slate-500">Ganancia %
                                 <input wire:model="catMargen.{{ $cat->id }}" type="text" inputmode="decimal" placeholder="—" class="input w-20 text-center">
                             </label>
+                            @endunless
                             <label class="flex items-center gap-2 text-xs text-slate-500">Descuento %
                                 <input wire:model="catDescuento.{{ $cat->id }}" type="text" inputmode="decimal" placeholder="ej. 50+13" title="Varios descuentos seguidos: 50+13" class="input w-24 text-center">
                             </label>
@@ -220,7 +224,7 @@
                     <th>{{ $carga->es_ajuste ? 'Producto' : ($carga->es_factura ? 'Factura' : 'Lista del proveedor') }}</th>
                     <th>Producto en Odoo</th>
                     <th class="!text-right">Costo</th>
-                    @unless($carga->es_factura)
+                    @unless($carga->solo_costo)
                     <th class="!text-center">Ganancia</th>
                     <th class="!text-right">Precio de venta</th>
                     @endunless
@@ -311,7 +315,7 @@
                         @endif
                     </td>
 
-                    @unless($carga->es_factura)
+                    @unless($carga->solo_costo)
                     <td class="text-center">
                         <div class="relative mx-auto w-24">
                             <input type="text" inputmode="decimal" value="{{ $pct($it->margen) }}" @disabled(!$editable)
@@ -366,7 +370,7 @@
     <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="text-sm text-slate-600">
-                {{ $carga->es_factura ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
+                {{ $carga->solo_costo ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
                 @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock. @endif
             </div>
             <button wire:click="aplicar" @disabled($seleccionados === 0)

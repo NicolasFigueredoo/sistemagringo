@@ -392,14 +392,10 @@ class Procesador
         return [$carga, $salteados];
     }
 
-    /** Campos que se escriben en Odoo: en un ajuste de categoría el costo no se toca y en una factura la venta tampoco. */
+    /** Campos que se escriben en Odoo: un ajuste solo cambia la venta; una lista o factura, solo el costo. */
     private function camposOdoo(Carga $carga, $costo, $precio): array
     {
-        return match (true) {
-            $carga->es_ajuste  => ['list_price' => (float) $precio],
-            $carga->es_factura => ['standard_price' => (float) $costo],
-            default            => ['standard_price' => (float) $costo, 'list_price' => (float) $precio],
-        };
+        return $carga->es_ajuste ? ['list_price' => (float) $precio] : ['standard_price' => (float) $costo];
     }
 
     /**

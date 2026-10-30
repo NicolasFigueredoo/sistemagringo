@@ -75,7 +75,7 @@
             <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <div class="flex items-center gap-2 text-sm font-medium text-slate-900">
                     <x-icon name="loader" class="h-4 w-4 animate-spin text-brand-600" />
-                    Leyendo la lista con IA: parte {{ min($leyendoIA['hecho'] + 1, $leyendoIA['total']) }} de {{ $leyendoIA['total'] }}
+                    Leyendo la lista: {{ $leyendoIA['hecho'] }} de {{ $leyendoIA['total'] }} partes
                 </div>
                 <div class="text-sm font-semibold text-slate-900">{{ $pct }}%</div>
             </div>

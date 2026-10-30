@@ -2,8 +2,9 @@
 
 namespace App\Services;
 
-use Anthropic\Client;
 use App\Models\LecturaFactura;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
@@ -17,6 +18,8 @@ class LectorListaIA
     private const TRAMO = 40000;
     /** en la pantalla de carga cada tramo es un pedido aparte: tiene que responder antes de que el servidor corte (~60 s) */
     public const TRAMO_WEB = 6000;
+    /** tramos que se mandan juntos (en paralelo) en cada pedido de la pantalla de carga */
+    public const A_LA_VEZ = 5;
 
     private const INSTRUCCIONES = <<<'TXT'
         Sos el asistente de una ferretería en Argentina. Te paso el texto (extraído de un PDF, con la disposición original en columnas)
@@ -58,8 +61,8 @@ class LectorListaIA
     public function leer(string $texto): array
     {
         $respuestas = [];
-        foreach (self::tramos($texto) as $tramo) {
-            $respuestas[] = $this->pedir($tramo);
+        foreach (array_chunk(self::tramos($texto), self::A_LA_VEZ) as $grupo) {
+            array_push($respuestas, ...$this->pedirVarios($grupo));
         }
         return self::aFilas($respuestas);
     }
@@ -85,33 +88,64 @@ class LectorListaIA
 
     public function pedir(string $tramo): array
     {
-        $client = new Client(apiKey: $this->apiKey);
-        $resp = $client->beta->messages->create(
-            model: $this->modelo,
-            maxTokens: 32000,
-            system: self::INSTRUCCIONES,
-            messages: [['role' => 'user', 'content' => [['type' => 'text', 'text' => "Lista de precios:\n\n" . $tramo]]]],
-            outputConfig: ['format' => ['type' => 'json_schema', 'schema' => self::esquema()]],
-            fallbacks: 'default',
-            betas: ['server-side-fallback-2026-07-01'],
-            requestOptions: ['timeout' => 300],
-        );
+        return $this->pedirVarios([$tramo])[0];
+    }
+
+    /** Varios tramos a la vez (llamadas en paralelo, tardan lo que el más lento). Respuestas en el mismo orden. */
+    public function pedirVarios(array $tramos): array
+    {
+        return array_map(fn ($r) => $r instanceof \Throwable ? throw $r : $r, $this->intentarVarios(array_values($tramos)));
+    }
+
+    /** Como pedirVarios, pero el tramo que falla vuelve como excepción (para reintentar solo ese). Mantiene las claves. */
+    public function intentarVarios(array $tramos): array
+    {
+        // as(): el pool devuelve las respuestas con la misma clave que el tramo
+        $resps = Http::pool(fn (Pool $pool) => array_map(fn ($i, $tramo) => $pool->as((string) $i)
+            ->withHeaders([
+                'x-api-key'         => $this->apiKey,
+                'anthropic-version' => '2023-06-01',
+                'anthropic-beta'    => 'server-side-fallback-2026-07-01',
+            ])
+            ->timeout(300)
+            ->post('https://api.anthropic.com/v1/messages', [
+                'model'         => $this->modelo,
+                'max_tokens'    => 32000,
+                'system'        => self::INSTRUCCIONES,
+                'messages'      => [['role' => 'user', 'content' => [['type' => 'text', 'text' => "Lista de precios:\n\n" . $tramo]]]],
+                'output_config' => ['format' => ['type' => 'json_schema', 'schema' => self::esquema()]],
+                'fallbacks'     => 'default',
+            ]), array_keys($tramos), $tramos));
+
+        return array_map(function ($resp) {
+            try {
+                return $this->respuesta($resp);
+            } catch (\Throwable $e) {
+                return $e;
+            }
+        }, $resps);
+    }
+
+    private function respuesta($resp): array
+    {
+        if ($resp instanceof \Throwable) throw new RuntimeException('Sin conexión con la IA: ' . $resp->getMessage());
+        if (!$resp->successful()) throw new RuntimeException('La IA respondió con error ' . $resp->status() . ': ' . ($resp->json('error.message') ?? $resp->body()));
 
         LecturaFactura::create([
             'user_id'        => auth()->id(),
             'tipo'           => 'lista',
             'fotos'          => 0,
-            'modelo'         => $resp->model,
-            'tokens_entrada' => $resp->usage->inputTokens,
-            'tokens_salida'  => $resp->usage->outputTokens,
+            'modelo'         => $resp->json('model'),
+            'tokens_entrada' => (int) $resp->json('usage.input_tokens'),
+            'tokens_salida'  => (int) $resp->json('usage.output_tokens'),
         ]);
 
-        if ($resp->stopReason === 'refusal') throw new RuntimeException('La IA no quiso leer la lista.');
-        if ($resp->stopReason === 'max_tokens') throw new RuntimeException('Un tramo de la lista es demasiado largo para la IA.');
+        if ($resp->json('stop_reason') === 'refusal') throw new RuntimeException('La IA no quiso leer la lista.');
+        if ($resp->json('stop_reason') === 'max_tokens') throw new RuntimeException('Un tramo de la lista es demasiado largo para la IA.');
 
-        foreach ($resp->content as $b) {
-            if ($b->type === 'text') {
-                $datos = json_decode($b->text, true);
+        foreach ($resp->json('content') ?? [] as $b) {
+            if (($b['type'] ?? '') === 'text') {
+                $datos = json_decode($b['text'], true);
                 if (is_array($datos)) return $datos;
             }
         }
