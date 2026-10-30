@@ -6,6 +6,7 @@ use App\Models\OdooProducto;
 use App\Models\Proveedor;
 use App\Services\DescargaLista;
 use App\Services\LectorLista;
+use App\Services\LectorListaIA;
 use App\Services\OdooClient;
 use App\Services\Precios;
 use App\Services\Procesador;
@@ -28,6 +29,9 @@ class SubirLista extends Component
     #[Locked] public ?array $descargada = null;   // ruta, ext, nombre
     public $proveedorId = '';
     public string $nuevoProveedor = '';
+
+    /** PDF leyéndose con IA de a tramos: hecho, total */
+    #[Locked] public ?array $leyendoIA = null;
 
     public array $preview = [];
     public int $ncols = 0;
@@ -108,14 +112,75 @@ class SubirLista extends Component
     private function leerArchivo(): void
     {
         $f = $this->fuente();
+        $this->leyendoIA = null;
         try {
+            // PDF con IA: un tramo por pedido (seguirLeyendo), así ningún pedido pasa el límite del servidor
+            if (strtolower($f['ext']) === 'pdf' && LectorListaIA::disponible() && !LectorLista::yaLeida($f['ruta'], 'pdf')) {
+                $tramos = LectorListaIA::tramos(LectorLista::textoPdf($f['ruta']), LectorListaIA::TRAMO_WEB);
+                Cache::put($this->claveLectura($f), ['tramos' => $tramos, 'respuestas' => []], now()->addHours(3));
+                $this->leyendoIA = ['hecho' => 0, 'total' => count($tramos)];
+                $this->preview = [];
+                $this->aviso = null;
+                $this->js('$wire.seguirLeyendo()');
+                return;
+            }
             $filas = LectorLista::leer($f['ruta'], $f['ext']);
         } catch (\Throwable $e) {
             $this->error = $e->getMessage();
             $this->preview = [];
             return;
         }
+        $this->mostrar($filas);
+    }
 
+    /** Lee el próximo tramo del PDF con IA; al terminar arma la vista previa. Se llama solo, un pedido tras otro. */
+    public function seguirLeyendo(): void
+    {
+        if (!$this->leyendoIA || !$f = $this->fuente()) return;
+        $estado = Cache::get($clave = $this->claveLectura($f));
+        if (!$estado) {
+            $this->leyendoIA = null;
+            $this->error = 'Se cortó la lectura de la lista: volvé a elegir el archivo.';
+            return;
+        }
+
+        $falla = null;
+        try {
+            @set_time_limit(0);
+            $estado['respuestas'][] = LectorListaIA::desdeConfig()->pedir($estado['tramos'][count($estado['respuestas'])]);
+        } catch (\Throwable $e) {
+            report($e);
+            $falla = 'No se pudo leer con IA (' . $e->getMessage() . '); se leyó sin IA, revisá los renglones.';
+        }
+
+        if (!$falla && count($estado['respuestas']) < count($estado['tramos'])) {
+            Cache::put($clave, $estado, now()->addHours(3));
+            $this->leyendoIA['hecho'] = count($estado['respuestas']);
+            $this->js('$wire.seguirLeyendo()');
+            return;
+        }
+
+        Cache::forget($clave);
+        $this->leyendoIA = null;
+        try {
+            $r = $falla ? null : LectorListaIA::aFilas($estado['respuestas']);
+            $filas = $r && $r['filas']
+                ? LectorLista::guardarIA($f['ruta'], $r)
+                : LectorLista::leerSinIA($f['ruta'], $falla ?? 'La IA no encontró productos; se leyó sin IA.');
+        } catch (\Throwable $e) {
+            $this->error = $e->getMessage();
+            return;
+        }
+        $this->mostrar($filas);
+    }
+
+    private function claveLectura(array $f): string
+    {
+        return 'lectura-ia:' . sha1_file($f['ruta']);
+    }
+
+    private function mostrar(array $filas): void
+    {
         if (!$filas) {
             $this->error = 'El archivo está vacío o no se pudo leer.';
             return;

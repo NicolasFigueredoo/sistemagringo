@@ -69,6 +69,23 @@
         </div>
     </section>
 
+    @if($leyendoIA)
+        @php $pct = round($leyendoIA['hecho'] / max(1, $leyendoIA['total']) * 100); @endphp
+        <div class="card px-5 py-4">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <div class="flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <x-icon name="loader" class="h-4 w-4 animate-spin text-brand-600" />
+                    Leyendo la lista con IA: parte {{ min($leyendoIA['hecho'] + 1, $leyendoIA['total']) }} de {{ $leyendoIA['total'] }}
+                </div>
+                <div class="text-sm font-semibold text-slate-900">{{ $pct }}%</div>
+            </div>
+            <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full bg-brand-500 transition-all" style="width: {{ $pct }}%"></div>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">No cierres esta página. Las listas largas pueden tardar unos minutos.</p>
+        </div>
+    @endif
+
     @if($preview)
     @php
         $campos = ['col_barcode' => 'Código de barras', 'col_codigo' => 'Código proveedor', 'col_nombre' => 'Descripción', 'col_precio' => 'Precio', 'col_cantidad' => 'Cantidad (ingreso)'];

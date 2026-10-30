@@ -42,8 +42,7 @@ class LectorLista
 
         if (!function_exists('cache')) return $leer();
 
-        $clave = 'lista:' . self::VERSION_CACHE . ':' . $ext . ':' . sha1_file($ruta);
-        $guardado = cache()->get($clave);
+        $guardado = cache()->get(self::clave($ruta, $ext));
         if (is_array($guardado)) {
             self::$columnasSugeridas = $guardado['columnas'];
             self::$sugerencias = $guardado['sugerencias'];
@@ -51,10 +50,43 @@ class LectorLista
         }
         $filas = $leer();
         // si la IA falló (corte de red, etc.) no se guarda: la próxima vez se reintenta
-        if ($filas && empty(self::$sugerencias['aviso'])) {
-            cache()->put($clave, ['filas' => $filas, 'columnas' => self::$columnasSugeridas, 'sugerencias' => self::$sugerencias], now()->addDays(7));
-        }
+        if ($filas && empty(self::$sugerencias['aviso'])) self::guardar($ruta, $ext, $filas, now()->addDays(7));
         return $filas;
+    }
+
+    public static function yaLeida(string $ruta, string $ext): bool
+    {
+        return cache()->has(self::clave($ruta, strtolower($ext)));
+    }
+
+    /** Termina la lectura del PDF hecha con IA de a tramos (pantalla de carga): $r = LectorListaIA::aFilas(). */
+    public static function guardarIA(string $ruta, array $r): array
+    {
+        self::$columnasSugeridas = $r['columnas'];
+        self::$sugerencias = ['ia' => true, 'precios_con_iva' => $r['precios_con_iva'], 'columna_costo' => $r['columna_costo']];
+        self::guardar($ruta, 'pdf', $r['filas'], now()->addDays(7));
+        return $r['filas'];
+    }
+
+    /** La IA falló a mitad de la lectura de a tramos: se lee sin IA y se guarda un rato, para que la carga use lo mismo. */
+    public static function leerSinIA(string $ruta, string $aviso): array
+    {
+        self::$columnasSugeridas = null;
+        self::$sugerencias = [];
+        $filas = self::pdf($ruta, false);
+        self::$sugerencias['aviso'] = $aviso;
+        if ($filas) self::guardar($ruta, 'pdf', $filas, now()->addHours(3));
+        return $filas;
+    }
+
+    private static function guardar(string $ruta, string $ext, array $filas, \DateTimeInterface $hasta): void
+    {
+        cache()->put(self::clave($ruta, $ext), ['filas' => $filas, 'columnas' => self::$columnasSugeridas, 'sugerencias' => self::$sugerencias], $hasta);
+    }
+
+    private static function clave(string $ruta, string $ext): string
+    {
+        return 'lista:' . self::VERSION_CACHE . ':' . $ext . ':' . sha1_file($ruta);
     }
 
     private static function excel(string $ruta): array
@@ -85,38 +117,12 @@ class LectorLista
         return self::limpiar($filas);
     }
 
-    private static function pdf(string $ruta): array
+    private static function pdf(string $ruta, bool $conIA = true): array
     {
-        $bin = function_exists('config') ? (config('odoo.pdftotext') ?: 'pdftotext') : 'pdftotext';
-        $bin = trim($bin, " \t\"'");
-        $salida = tempnam(sys_get_temp_dir(), 'lista');
-
-        // si es una ruta completa, tiene que existir
-        if (preg_match('#[\\/]#', $bin) && !is_file($bin)) {
-            throw new RuntimeException("No existe el archivo pdftotext: $bin. Revisá PDFTOTEXT_PATH en el .env.");
-        }
-
-        [$codigo, $err] = self::ejecutar([$bin, '-layout', '-enc', 'UTF-8', $ruta, $salida]);
-        if ($codigo !== 0 || !is_file($salida)) {
-            @unlink($salida);
-            $pista = match (true) {
-                $codigo === -1073741515 || $codigo === 3221225781 => ' (faltan DLLs: el .exe no arranca, instalá Visual C++ Redistributable x64)',
-                $codigo === -1073741701 || $codigo === 3221225595 => ' (el .exe no es compatible con este Windows)',
-                $codigo === 1 => ' (no pudo abrir el PDF)',
-                $codigo === 3 => ' (error de permisos sobre el PDF)',
-                default => '',
-            };
-            throw new RuntimeException("No se pudo leer el PDF con pdftotext (código $codigo$pista). " . trim($err) . " | exe: $bin");
-        }
-        $txt = file_get_contents($salida);
-        @unlink($salida);
-
-        if (strlen(trim($txt)) < 20) {
-            throw new RuntimeException('El PDF parece una foto o un escaneo. Pedile al proveedor la lista en Excel.');
-        }
+        $txt = self::textoPdf($ruta);
 
         // Con IA: entiende productos en varios renglones, varias columnas de precio, rubros, etc.
-        if (class_exists(LectorListaIA::class) && function_exists('config') && LectorListaIA::disponible()) {
+        if ($conIA && class_exists(LectorListaIA::class) && function_exists('config') && LectorListaIA::disponible()) {
             try {
                 @set_time_limit(0);
                 $r = LectorListaIA::desdeConfig()->leer($txt);
@@ -146,6 +152,39 @@ class LectorLista
 
         // 2) Tabla con columnas fijas (por posición)
         return self::limpiar(self::cortarPorPosicion($lineas));
+    }
+
+    /** Texto del PDF con pdftotext -layout (páginas separadas por \f). */
+    public static function textoPdf(string $ruta): string
+    {
+        $bin = function_exists('config') ? (config('odoo.pdftotext') ?: 'pdftotext') : 'pdftotext';
+        $bin = trim($bin, " \t\"'");
+        $salida = tempnam(sys_get_temp_dir(), 'lista');
+
+        // si es una ruta completa, tiene que existir
+        if (preg_match('#[\\/]#', $bin) && !is_file($bin)) {
+            throw new RuntimeException("No existe el archivo pdftotext: $bin. Revisá PDFTOTEXT_PATH en el .env.");
+        }
+
+        [$codigo, $err] = self::ejecutar([$bin, '-layout', '-enc', 'UTF-8', $ruta, $salida]);
+        if ($codigo !== 0 || !is_file($salida)) {
+            @unlink($salida);
+            $pista = match (true) {
+                $codigo === -1073741515 || $codigo === 3221225781 => ' (faltan DLLs: el .exe no arranca, instalá Visual C++ Redistributable x64)',
+                $codigo === -1073741701 || $codigo === 3221225595 => ' (el .exe no es compatible con este Windows)',
+                $codigo === 1 => ' (no pudo abrir el PDF)',
+                $codigo === 3 => ' (error de permisos sobre el PDF)',
+                default => '',
+            };
+            throw new RuntimeException("No se pudo leer el PDF con pdftotext (código $codigo$pista). " . trim($err) . " | exe: $bin");
+        }
+        $txt = file_get_contents($salida);
+        @unlink($salida);
+
+        if (strlen(trim($txt)) < 20) {
+            throw new RuntimeException('El PDF parece una foto o un escaneo. Pedile al proveedor la lista en Excel.');
+        }
+        return $txt;
     }
 
     /**

@@ -15,6 +15,8 @@ class LectorListaIA
 {
     /** caracteres de texto por llamada (unas 15 a 25 páginas) */
     private const TRAMO = 40000;
+    /** en la pantalla de carga cada tramo es un pedido aparte: tiene que responder antes de que el servidor corte (~60 s) */
+    public const TRAMO_WEB = 6000;
 
     private const INSTRUCCIONES = <<<'TXT'
         Sos el asistente de una ferretería en Argentina. Te paso el texto (extraído de un PDF, con la disposición original en columnas)
@@ -63,7 +65,7 @@ class LectorListaIA
     }
 
     /** Agrupa las páginas en tramos de hasta TRAMO caracteres, sin cortar páginas. */
-    public static function tramos(string $texto): array
+    public static function tramos(string $texto, int $max = self::TRAMO): array
     {
         $tramos = [];
         $actual = '';
@@ -71,7 +73,7 @@ class LectorListaIA
             // menos espacios = menos tokens; 3 espacios alcanzan para ver las columnas
             $pagina = trim(preg_replace('/ {3,}/', '   ', $pagina));
             if ($pagina === '') continue;
-            if ($actual !== '' && mb_strlen($actual) + mb_strlen($pagina) > self::TRAMO) {
+            if ($actual !== '' && mb_strlen($actual) + mb_strlen($pagina) > $max) {
                 $tramos[] = $actual;
                 $actual = '';
             }
@@ -81,7 +83,7 @@ class LectorListaIA
         return $tramos;
     }
 
-    private function pedir(string $tramo): array
+    public function pedir(string $tramo): array
     {
         $client = new Client(apiKey: $this->apiKey);
         $resp = $client->beta->messages->create(
