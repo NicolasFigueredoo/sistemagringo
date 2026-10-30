@@ -20,7 +20,7 @@ class LectorLista
     private const UNIDADES = 'UNIDAD|UNIDADES|UN|UNI|CAJA|CJ|PAQUETE|PAQ|BOLSA|ROLLO|CIEN|MIL|DOCENA|DOC|PAR|JUEGO|JGO|BLISTER|KG|KILO|METRO|MTS|MT|LITRO|LT|PACK|DISPLAY|TIRA|SET|KIT|BIDON|BALDE';
 
     /** Sube la versión cuando cambia la forma de leer, así no se usan lecturas viejas guardadas. */
-    private const VERSION_CACHE = 3;
+    private const VERSION_CACHE = 4;
 
     /**
      * El resultado queda guardado por contenido del archivo: la vista previa y después la carga (o volver a subir

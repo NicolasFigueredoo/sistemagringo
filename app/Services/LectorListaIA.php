@@ -19,15 +19,15 @@ class LectorListaIA
     /** en la pantalla de carga cada tramo es un pedido aparte: tiene que responder antes de que el servidor corte (~60 s) */
     public const TRAMO_WEB = 6000;
     /** tramos que se mandan juntos (en paralelo) en cada pedido de la pantalla de carga */
-    public const A_LA_VEZ = 5;
+    public const A_LA_VEZ = 10;
 
     private const INSTRUCCIONES = <<<'TXT'
         Sos el asistente de una ferretería en Argentina. Te paso el texto (extraído de un PDF, con la disposición original en columnas)
-        de un tramo de la lista de precios de un proveedor. Pasá cada producto a la lista "items":
-        - codigo_barras: el código EAN/UPC (8 a 14 dígitos) si figura; si no, null. Un código de 8+ dígitos en la columna "Código"/"Cód." es un EAN.
-        - codigo: el código o SKU del proveedor si no es un EAN (ej. "TER320", "RH-2402", "PY 10 CTOPE", "8670C"); si no hay, null.
-        - descripcion: la descripción completa del producto. Si está partida en varias líneas, unila. Podés agregar la marca al final si figura aparte.
-        - precios: TODOS los importes de precio del renglón, en el orden de las columnas de precio de la lista, como números
+        de un tramo de la lista de precios de un proveedor. Pasá cada producto a la lista "items" (claves cortas para ahorrar texto):
+        - b (código de barras): el código EAN/UPC (8 a 14 dígitos) si figura; si no, null. Un código de 8+ dígitos en la columna "Código"/"Cód." es un EAN.
+        - c (código): el código o SKU del proveedor si no es un EAN (ej. "TER320", "RH-2402", "PY 10 CTOPE", "8670C"); si no hay, null.
+        - d (descripción): la descripción completa del producto. Si está partida en varias líneas, unila. Podés agregar la marca al final si figura aparte.
+        - p (precios): TODOS los importes de precio del renglón, en el orden de las columnas de precio de la lista, como números
           (formato argentino: "1.234,56" = 1234.56; "$193.750" = 193750). No incluyas stock, cantidades por caja ni medidas.
           Si un importe quedó cortado en dos líneas ("107.903,2" y abajo "5") es 107903.25.
 
@@ -129,37 +129,51 @@ class LectorListaIA
     }
 
     /**
-     * La IA a veces le pone a un producto el precio del de al lado (listas con código, descripción y marca en renglones
-     * separados). Si el renglón del PDF donde está su código tiene importes, los precios tienen que salir de ahí:
-     * si no coinciden, se usan los de ese renglón.
+     * La IA a veces le pone a un producto el precio de otro (listas con código, descripción, marca e importes en
+     * renglones separados). Los precios tienen que salir del bloque del producto en el PDF: desde el renglón de su
+     * código hasta el del código siguiente. Si no coinciden, se usan los importes de ese bloque.
      */
     public static function verificarPrecios(array $datos, string $tramo): array
     {
         $lineas = preg_split('/\r\n|\n|\r/', $tramo);
-        foreach ($datos['items'] ?? [] as $k => $it) {
-            $linea = self::lineaDelCodigo($lineas, (string) ($it['codigo_barras'] ?? ''))
+        $items = $datos['items'] ?? [];
+
+        // renglón donde está el código de cada producto (si el código aparece en un solo renglón)
+        $desde = [];
+        foreach ($items as $k => $it) {
+            $i = self::lineaDelCodigo($lineas, (string) ($it['codigo_barras'] ?? ''))
                 ?? self::lineaDelCodigo($lineas, (string) ($it['codigo'] ?? ''));
-            if ($linea === null) continue;
+            if ($i !== null) $desde[$k] = $i;
+        }
+        $inicios = array_values(array_unique($desde));
+        sort($inicios);
+
+        foreach ($desde as $k => $i) {
+            $siguientes = array_filter($inicios, fn ($j) => $j > $i);
+            $hasta = min($siguientes ? min($siguientes) : count($lineas), $i + 6);
+            $bloque = implode("\n", array_slice($lineas, $i, $hasta - $i));
+            // importe cortado en dos renglones: "107.903,2" y abajo "5" es 107.903,25
+            $bloque = preg_replace('/(\d,\d)[ \t]*\n[ \t]*(\d)(?![\d.,])/', '$1$2', $bloque);
 
             // importes con centavos ("5.270,00", "$ 1.234,5"): así no se confunden con stock, unidades o el código
-            preg_match_all('/(?<![\d.,])\d{1,3}(?:\.\d{3})*,\d{1,2}(?![\d,])|(?<![\d.,])\d+,\d{1,2}(?![\d,])/', $linea, $m);
-            $enRenglon = array_map(fn ($v) => (float) str_replace(['.', ','], ['', '.'], $v), $m[0]);
-            if (!$enRenglon) continue;
+            preg_match_all('/(?<![\d.,])\d{1,3}(?:\.\d{3})*,\d{1,2}(?![\d,])|(?<![\d.,])\d+,\d{1,2}(?![\d,])/', $bloque, $m);
+            $enBloque = array_map(fn ($v) => (float) str_replace(['.', ','], ['', '.'], $v), $m[0]);
+            if (!$enBloque || count($enBloque) > 8) continue;
 
-            $precios = array_values(array_filter((array) ($it['precios'] ?? []), 'is_numeric'));
-            $estan = $precios && !array_filter($precios, fn ($p) => !array_filter($enRenglon, fn ($r) => abs($r - $p) < 0.015));
-            if (!$estan) $datos['items'][$k]['precios'] = $enRenglon;
+            $precios = array_values(array_filter((array) ($items[$k]['precios'] ?? []), 'is_numeric'));
+            $estan = $precios && !array_filter($precios, fn ($p) => !array_filter($enBloque, fn ($r) => abs($r - $p) < 0.015));
+            if (!$estan) $datos['items'][$k]['precios'] = $enBloque;
         }
         return $datos;
     }
 
-    /** El único renglón del tramo que tiene el código como palabra suelta (si está en varios, no se sabe cuál es). */
-    private static function lineaDelCodigo(array $lineas, string $codigo): ?string
+    /** Índice del único renglón del tramo que tiene el código como palabra suelta (si está en varios, no se sabe cuál es). */
+    private static function lineaDelCodigo(array $lineas, string $codigo): ?int
     {
         $codigo = trim($codigo);
         if (mb_strlen($codigo) < 4) return null;
         $patron = '/(?<![\p{L}\p{N}])' . preg_quote($codigo, '/') . '(?![\p{L}\p{N}])/iu';
-        $hay = array_values(array_filter($lineas, fn ($l) => preg_match($patron, $l)));
+        $hay = array_keys(array_filter($lineas, fn ($l) => preg_match($patron, $l)));
         return count($hay) === 1 ? $hay[0] : null;
     }
 
@@ -183,7 +197,15 @@ class LectorListaIA
         foreach ($resp->json('content') ?? [] as $b) {
             if (($b['type'] ?? '') === 'text') {
                 $datos = json_decode($b['text'], true);
-                if (is_array($datos)) return $datos;
+                if (!is_array($datos)) continue;
+                // claves cortas de la respuesta -> las de siempre
+                $datos['items'] = array_map(fn ($it) => [
+                    'codigo_barras' => $it['b'] ?? null,
+                    'codigo'        => $it['c'] ?? null,
+                    'descripcion'   => $it['d'] ?? '',
+                    'precios'       => $it['p'] ?? [],
+                ], $datos['items'] ?? []);
+                return $datos;
             }
         }
         throw new RuntimeException('No se pudo leer la respuesta de la IA.');
@@ -257,12 +279,12 @@ class LectorListaIA
                     'items' => [
                         'type' => 'object',
                         'properties' => [
-                            'codigo_barras' => $texto,
-                            'codigo'        => $texto,
-                            'descripcion'   => ['type' => 'string'],
-                            'precios'       => ['type' => 'array', 'items' => ['type' => 'number']],
+                            'b' => $texto + ['description' => 'código de barras'],
+                            'c' => $texto + ['description' => 'código del proveedor'],
+                            'd' => ['type' => 'string', 'description' => 'descripción'],
+                            'p' => ['type' => 'array', 'items' => ['type' => 'number'], 'description' => 'precios'],
                         ],
-                        'required' => ['codigo_barras', 'codigo', 'descripcion', 'precios'],
+                        'required' => ['b', 'c', 'd', 'p'],
                         'additionalProperties' => false,
                     ],
                 ],
