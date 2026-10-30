@@ -12,6 +12,7 @@ class CargaItem extends Model
         'seleccionado'  => 'boolean',
         'aplicado'      => 'boolean',
         'precio_manual' => 'boolean',
+        'costo_manual'  => 'boolean',
     ];
 
     public function carga() { return $this->belongsTo(Carga::class); }

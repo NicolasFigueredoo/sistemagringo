@@ -2,8 +2,9 @@
 require __DIR__ . '/../app/Services/Precios.php';
 require __DIR__ . '/../app/Services/Matcher.php';
 require __DIR__ . '/../app/Services/LectorLista.php';
+require __DIR__ . '/../app/Services/LectorListaIA.php';
 
-use App\Services\{Precios, Matcher, LectorLista};
+use App\Services\{Precios, Matcher, LectorLista, LectorListaIA};
 
 $fallas = 0;
 function ok($cond, $msg) { global $fallas; echo ($cond ? "  ✓ " : "  ✗ ") . $msg . "\n"; if (!$cond) $fallas++; }
@@ -100,6 +101,32 @@ ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 30, "código de barras 
 $mp = new Matcher([['id' => 20, 'nombre' => 'POXIPOL gris 108G/70ML 10 MIN', 'barcode' => null, 'default_code' => 'ST00118']]);
 $r = $mp->buscar(null, 'ST00118-POXIPOL', 'Met. 10 MIN. 108G / 70ML');
 ok($r['match'] === 'codigo' && $r['odoo_product_id'] === 20, "código con la marca pegada ('ST00118-POXIPOL' = 'ST00118') -> verde");
+
+echo "Descuentos encadenados:\n";
+ok(Precios::descuento('50+13') == 56.5, "50+13 = 56,5%");
+ok(Precios::descuento('50 % + 13 %') == 56.5, "50 % + 13 % = 56,5%");
+ok(Precios::descuento('10') == 10.0, "10 = 10%");
+ok(Precios::descuento('') === null, "vacío = sin descuento");
+ok(Precios::textoDescuento('50 + 13') === '50+13' && Precios::textoDescuento('10') === null, "texto solo si es encadenado");
+ok(Precios::costo(1000, Precios::descuento('50+13')) == 435.0, "1000 con 50+13 = 435");
+
+echo "Lista leída con IA:\n";
+$r = LectorListaIA::aFilas([
+    ['columnas_precio' => ['VENTA + iva', 'PVP+iva'], 'indice_costo' => 0, 'precios_con_iva' => true, 'items' => [
+        ['codigo_barras' => null, 'codigo' => '8670', 'descripcion' => 'Taladro 20V', 'precios' => [193750, 261563]],
+        ['codigo_barras' => '7791772037563', 'codigo' => null, 'descripcion' => 'TERMICA 10A', 'precios' => [107903.25, 0]],
+    ]],
+    ['columnas_precio' => [], 'indice_costo' => 0, 'precios_con_iva' => false, 'items' => [
+        ['codigo_barras' => null, 'codigo' => '8670', 'descripcion' => 'Taladro 20V', 'precios' => [193750, 261563]],   // repetido entre tramos
+        ['codigo_barras' => null, 'codigo' => 'X', 'descripcion' => 'Sin precio', 'precios' => []],
+    ]],
+]);
+ok(count($r['filas']) === 3 && $r['filas'][0][3] === 'VENTA + iva', "encabezado + 2 productos (sin repetidos ni sin precio)");
+ok($r['columnas']['col_precio'] === 3 && $r['columnas']['fila_inicio'] === 2 && $r['precios_con_iva'], "columna de costo e IVA");
+ok($r['filas'][2][0] === '7791772037563' && Precios::numero($r['filas'][2][3]) == 107903.25, "EAN y precio cortado en dos líneas");
+ok(Precios::numero($r['filas'][1][3]) == 193750.0, "precio sin decimales");
+$t = LectorListaIA::tramos(str_repeat("producto   1.234,56\n", 3000) . "\f" . str_repeat("otro      5,00\n", 3000));
+ok(count($t) === 2, "texto largo partido en tramos por página");
 
 echo "Reajuste sin IVA:\n";
 $v4 = Precios::venta(1000, 50, false);          ok($v4 == 1500.0, "costo 1000 + 50% = $v4");

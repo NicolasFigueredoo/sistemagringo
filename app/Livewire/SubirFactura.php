@@ -8,6 +8,7 @@ use App\Models\Proveedor;
 use App\Services\LectorFactura;
 use App\Services\Matcher;
 use App\Services\OdooClient;
+use App\Services\Precios;
 use App\Support\Instancia;
 use App\Services\Procesador;
 use Illuminate\Support\Facades\Cache;
@@ -28,6 +29,7 @@ class SubirFactura extends Component
     public $nuevas = [];        // lo que se acaba de sacar o adjuntar
     public array $fotos = [];   // todas las páginas de la factura
     public string $iva = 'auto';   // auto | tal_cual | sacar | agregar
+    public string $descuentoExtra = '';   // se suma al que trae la factura; acepta "50+13"
 
     public ?string $error = null;
     public ?string $aviso = null;
@@ -46,9 +48,14 @@ class SubirFactura extends Component
     public function updatedNuevas(): void
     {
         $this->error = null;
+        // por extensión y no por contenido (algunos celulares mandan fotos que no se reconocen por contenido)
         $this->validate(
-            ['nuevas.*' => 'file|max:12288|mimes:jpg,jpeg,png,webp,pdf'],
-            ['nuevas.*.mimes' => 'Solo fotos (JPG, PNG) o PDF.', 'nuevas.*.max' => 'Cada archivo puede pesar hasta 12 MB.']
+            ['nuevas.*' => ['file', 'max:20480', function ($attr, $valor, $falla) {
+                if (!in_array(strtolower($valor->getClientOriginalExtension()), ['jpg', 'jpeg', 'png', 'webp', 'pdf'], true)) {
+                    $falla('Solo fotos (JPG, PNG) o PDF.');
+                }
+            }]],
+            ['nuevas.*.max' => 'Cada archivo puede pesar hasta 20 MB.']
         );
         $this->fotos = array_merge($this->fotos, is_array($this->nuevas) ? $this->nuevas : [$this->nuevas]);
         $this->nuevas = [];
@@ -92,6 +99,14 @@ class SubirFactura extends Component
             return;
         }
         if (!$factura['items']) { $this->error = 'No se encontró ningún producto en la foto. Probá con una foto más nítida y derecha.'; return; }
+
+        // descuento adicional sobre el que trae la factura: 10% de la factura + "50+13" = 10+50+13
+        if (Precios::descuento($this->descuentoExtra) !== null) {
+            $general = (float) $factura['descuento_general'];
+            $texto = ($general > 0 ? rtrim(rtrim((string) round($general, 2), '0'), '.') . '+' : '') . preg_replace('/\s+/', '', $this->descuentoExtra);
+            $factura['descuento_general'] = Precios::descuento($texto);
+            $factura['descuento_texto'] = Precios::textoDescuento($texto);
+        }
 
         $prov = match (true) {
             $this->proveedorId === 'nuevo' => Proveedor::firstOrCreate(['nombre' => trim($this->nuevoProveedor)]),

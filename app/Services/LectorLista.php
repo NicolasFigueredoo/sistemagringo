@@ -10,32 +10,67 @@ use RuntimeException;
  */
 class LectorLista
 {
-    /** Columnas ya conocidas cuando el lector "por renglón" armó las filas él mismo. */
+    /** Columnas ya conocidas cuando el lector "por renglón" (o la IA) armó las filas él mismo. */
     public static ?array $columnasSugeridas = null;
+
+    /** Datos que el lector deduce de la lista: precios_con_iva, columna_costo, ia (bool), aviso. */
+    public static array $sugerencias = [];
 
     /** Unidades de venta típicas que vienen pegadas antes del precio. */
     private const UNIDADES = 'UNIDAD|UNIDADES|UN|UNI|CAJA|CJ|PAQUETE|PAQ|BOLSA|ROLLO|CIEN|MIL|DOCENA|DOC|PAR|JUEGO|JGO|BLISTER|KG|KILO|METRO|MTS|MT|LITRO|LT|PACK|DISPLAY|TIRA|SET|KIT|BIDON|BALDE';
 
-    /** @return array<int,array<int,string>> filas (índice 0) de celdas (índice 0 = columna A) */
+    /** Sube la versión cuando cambia la forma de leer, así no se usan lecturas viejas guardadas. */
+    private const VERSION_CACHE = 2;
+
+    /**
+     * El resultado queda guardado por contenido del archivo: la vista previa y después la carga (o volver a subir
+     * la misma lista) no leen dos veces ni pagan la IA dos veces.
+     * @return array<int,array<int,string>> filas (índice 0) de celdas (índice 0 = columna A)
+     */
     public static function leer(string $ruta, ?string $extension = null): array
     {
         $ext = strtolower($extension ?? pathinfo($ruta, PATHINFO_EXTENSION));
         self::$columnasSugeridas = null;
+        self::$sugerencias = [];
 
-        return match ($ext) {
+        $leer = fn () => match ($ext) {
             'xlsx', 'xls', 'ods' => self::excel($ruta),
             'csv', 'txt'         => self::csv($ruta),
             'pdf'                => self::pdf($ruta),
             default => throw new RuntimeException("Formato .$ext no soportado. Usá Excel o PDF."),
         };
+
+        if (!function_exists('cache')) return $leer();
+
+        $clave = 'lista:' . self::VERSION_CACHE . ':' . $ext . ':' . sha1_file($ruta);
+        $guardado = cache()->get($clave);
+        if (is_array($guardado)) {
+            self::$columnasSugeridas = $guardado['columnas'];
+            self::$sugerencias = $guardado['sugerencias'];
+            return $guardado['filas'];
+        }
+        $filas = $leer();
+        // si la IA falló (corte de red, etc.) no se guarda: la próxima vez se reintenta
+        if ($filas && empty(self::$sugerencias['aviso'])) {
+            cache()->put($clave, ['filas' => $filas, 'columnas' => self::$columnasSugeridas, 'sugerencias' => self::$sugerencias], now()->addDays(7));
+        }
+        return $filas;
     }
 
     private static function excel(string $ruta): array
     {
-        $libro = \PhpOffice\PhpSpreadsheet\IOFactory::load($ruta);
+        // listas de 30 MB: solo valores (sin formatos ni estilos) y sin celdas vacías
+        @ini_set('memory_limit', '2048M');
+        @set_time_limit(0);
+        $lector = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($ruta);
+        $lector->setReadDataOnly(true);
+        $lector->setReadEmptyCells(false);
+        $libro = $lector->load($ruta);
         $hoja = $libro->getActiveSheet();
         // formatData=false: valores crudos (los EAN no salen como 7.79E+12)
         $filas = $hoja->toArray(null, true, false, false);
+        $libro->disconnectWorksheets();
+        unset($libro, $hoja);
         return self::limpiar($filas);
     }
 
@@ -78,6 +113,23 @@ class LectorLista
 
         if (strlen(trim($txt)) < 20) {
             throw new RuntimeException('El PDF parece una foto o un escaneo. Pedile al proveedor la lista en Excel.');
+        }
+
+        // Con IA: entiende productos en varios renglones, varias columnas de precio, rubros, etc.
+        if (class_exists(LectorListaIA::class) && function_exists('config') && LectorListaIA::disponible()) {
+            try {
+                @set_time_limit(0);
+                $r = LectorListaIA::desdeConfig()->leer($txt);
+                if ($r['filas']) {
+                    self::$columnasSugeridas = $r['columnas'];
+                    self::$sugerencias = ['ia' => true, 'precios_con_iva' => $r['precios_con_iva'], 'columna_costo' => $r['columna_costo']];
+                    return $r['filas'];
+                }
+                self::$sugerencias['aviso'] = 'La IA no encontró productos; se leyó sin IA.';
+            } catch (\Throwable $e) {
+                if (function_exists('report')) report($e);
+                self::$sugerencias['aviso'] = 'No se pudo leer con IA (' . $e->getMessage() . '); se leyó sin IA, revisá los renglones.';
+            }
         }
 
         $lineas = array_values(array_filter(preg_split('/\r\n|\n|\r/', $txt), fn ($l) => trim($l) !== ''));

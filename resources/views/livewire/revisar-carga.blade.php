@@ -28,7 +28,7 @@
             <h1 class="page-title mt-1">{{ $carga->titulo }}</h1>
             <p class="page-subtitle">
                 {{ $carga->archivo }} · {{ $carga->created_at->format('d/m/Y H:i') }}
-                @if($carga->descuento > 0) · Descuento {{ $pct($carga->descuento) }}% @endif
+                @if($carga->descuento > 0) · Descuento {{ $carga->descuento_texto ? $carga->descuento_texto . ' (' . $pct($carga->descuento) . '%)' : $pct($carga->descuento) . '%' }} @endif
                 @if($carga->es_factura)
                     · {{ $carga->agregar_iva ? 'Costo con IVA agregado' : ($carga->iva_incluido ? 'IVA descontado del costo' : 'Costo tal cual la factura') }}
                 @elseif($carga->iva_incluido) · Lista con IVA @endif
@@ -158,7 +158,7 @@
                                 <input wire:model="catMargen.{{ $cat->id }}" type="text" inputmode="decimal" placeholder="—" class="input w-20 text-center">
                             </label>
                             <label class="flex items-center gap-2 text-xs text-slate-500">Descuento %
-                                <input wire:model="catDescuento.{{ $cat->id }}" type="text" inputmode="decimal" placeholder="—" class="input w-20 text-center">
+                                <input wire:model="catDescuento.{{ $cat->id }}" type="text" inputmode="decimal" placeholder="ej. 50+13" title="Varios descuentos seguidos: 50+13" class="input w-24 text-center">
                             </label>
                             <label class="flex items-center gap-2 text-xs text-slate-500">
                                 <input wire:model="catGuardar.{{ $cat->id }}" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600"> Guardar
@@ -247,7 +247,7 @@
                             @if($it->unidad && !is_numeric($it->unidad))<span>{{ $it->unidad }}</span><span>·</span>@endif
                             <span>{{ $carga->es_factura ? 'Factura' : 'Lista' }} {{ $m($it->precio_lista) }}</span>
                             @if($carga->es_factura && (float) $it->cantidad > 0)<span>· x {{ $cant($it->cantidad) }}</span>@endif
-                            @if((float) $it->descuento > 0)<span>· Dto. {{ $pct($it->descuento) }}%</span>@endif
+                            @if((float) $it->descuento > 0)<span>· Dto. {{ $carga->descuento_texto && abs((float) $it->descuento - (float) $carga->descuento) < 0.01 ? $carga->descuento_texto : $pct($it->descuento) . '%' }}</span>@endif
                         </div>
                     </td>
 
@@ -292,7 +292,17 @@
                         @if($it->costo_anterior !== null)
                             <div class="text-xs text-slate-400">Antes {{ $m($it->costo_anterior) }}</div>
                         @endif
-                        <div class="font-semibold text-slate-900">{{ $m($it->costo_nuevo) }}</div>
+                        @if($editable && !$carga->es_ajuste)
+                            <div class="relative ml-auto w-32">
+                                <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                                <input type="text" inputmode="decimal" value="{{ number_format((float) $it->costo_nuevo, 2, ',', '.') }}"
+                                       wire:change="cambiarCosto({{ $it->id }}, $event.target.value)"
+                                       class="input pl-7 text-right font-semibold {{ $it->costo_manual ? '!border-brand-500 bg-brand-50' : '' }}">
+                            </div>
+                            @if($it->costo_manual)<div class="mt-0.5 text-[11px] text-brand-600">Costo a mano</div>@endif
+                        @else
+                            <div class="font-semibold text-slate-900">{{ $m($it->costo_nuevo) }}</div>
+                        @endif
                         @if($var !== null)
                             <div class="mt-0.5 inline-flex items-center gap-1 text-xs font-medium {{ $grande ? 'rounded bg-red-50 px-1.5 text-red-700 ring-1 ring-red-600/20' : ($var > 0 ? 'text-red-600' : ($var < 0 ? 'text-emerald-600' : 'text-slate-400')) }}">
                                 @if($var > 0)<x-icon name="trending-up" class="h-3 w-3" />@elseif($var < 0)<x-icon name="trending-down" class="h-3 w-3" />@endif

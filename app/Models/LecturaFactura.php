@@ -18,7 +18,7 @@ class LecturaFactura extends Model
     /** Lecturas hechas en el mes actual (las que cuentan para el tope). */
     public static function delMes(): int
     {
-        return static::where('created_at', '>=', now()->startOfMonth())->count();
+        return static::where('tipo', 'factura')->where('created_at', '>=', now()->startOfMonth())->count();
     }
 
     /** null = sin tope */

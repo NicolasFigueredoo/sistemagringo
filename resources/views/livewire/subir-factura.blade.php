@@ -121,6 +121,15 @@
                 </div>
                 <p class="mt-1.5 text-xs text-slate-500">{{ $opcionesIva[$iva][1] }} Lo podés cambiar después en la revisión.</p>
             </div>
+
+            <label class="block">
+                <span class="label">Descuento adicional</span>
+                <div class="relative">
+                    <input wire:model="descuentoExtra" type="text" inputmode="decimal" placeholder="ej. 50+13" class="input pr-8">
+                    <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                </div>
+                <p class="mt-1.5 text-xs text-slate-500">Se aplica sobre los precios de la factura (además del descuento que figure en ella). Varios descuentos seguidos: 50+13.</p>
+            </label>
         </div>
         @php $agotado = $tope && $leidasMes >= $tope; @endphp
         <div class="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-slate-200 bg-slate-50 px-5 py-4">

@@ -57,7 +57,7 @@
                         </td>
                         <td class="!align-middle">
                             <div class="relative mx-auto w-24">
-                                <input type="text" inputmode="decimal" placeholder="—" value="{{ $pct($c->descuento) }}"
+                                <input type="text" inputmode="decimal" placeholder="ej. 50+13" title="Varios descuentos seguidos: 50+13" value="{{ $c->descuento_texto ?: $pct($c->descuento) }}"
                                        wire:change="guardar({{ $c->id }}, 'descuento', $event.target.value)"
                                        class="input pr-7 text-center {{ $c->descuento !== null ? '!border-brand-500 bg-brand-50/50' : '' }}">
                                 <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>

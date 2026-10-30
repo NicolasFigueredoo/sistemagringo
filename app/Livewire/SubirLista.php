@@ -35,9 +35,7 @@ class SubirLista extends Component
     public array $columnas = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null, 'col_cantidad' => null];
 
     public $descuento = 0;
-    public $margen = 60;
     public bool $ivaIncluido = false;
-    public bool $sumarIva = true;
 
     public ?string $error = null;
     public ?string $aviso = null;
@@ -57,8 +55,7 @@ class SubirLista extends Component
     public function updatedProveedorId(): void
     {
         if ($p = Proveedor::find($this->proveedorId)) {
-            $this->descuento = (float) $p->descuento;
-            $this->margen = (float) $p->margen;
+            $this->descuento = $p->descuento_texto ?: rtrim(rtrim((string) $p->descuento, '0'), '.');
             $this->ivaIncluido = (bool) $p->iva_incluido;
             $this->listaUrl = (string) $p->lista_url;
             if ($this->preview && $p->col_precio !== null) {
@@ -70,10 +67,20 @@ class SubirLista extends Component
     public function updatedArchivo(): void
     {
         $this->error = null;
-        $this->validate(['archivo' => 'required|file|max:20480|mimes:xlsx,xls,ods,csv,txt,pdf']);
+        // por extensión y no por contenido: muchos sistemas exportan xls/xlsx que no se reconocen por contenido
+        $this->validate(
+            ['archivo' => ['required', 'file', 'max:51200', function ($attr, $valor, $falla) {
+                if (!in_array(strtolower($valor->getClientOriginalExtension()), self::EXTENSIONES, true)) {
+                    $falla('Formato no soportado: subí la lista en Excel (xlsx, xls, ods), CSV o PDF.');
+                }
+            }]],
+            ['archivo.max' => 'La lista puede pesar hasta 50 MB.']
+        );
         $this->descargada = null;
         $this->leerArchivo();
     }
+
+    private const EXTENSIONES = ['xlsx', 'xls', 'ods', 'csv', 'txt', 'pdf'];
 
     /** Baja la lista desde la web del proveedor y sigue igual que si se hubiera subido el archivo. */
     public function traerDeWeb(): void
@@ -119,9 +126,23 @@ class SubirLista extends Component
         $this->ncols = max(array_map('count', $this->preview));
 
         $p = Proveedor::find($this->proveedorId);
-        $this->columnas = ($p && $p->col_precio !== null)
+        $sug = LectorLista::$sugerencias;
+        // la IA arma ella misma las columnas: las guardadas del proveedor no sirven para esa forma
+        $this->columnas = ($p && $p->col_precio !== null && empty($sug['ia']))
             ? $p->only(['fila_inicio', 'col_barcode', 'col_codigo', 'col_nombre', 'col_precio', 'col_cantidad'])
             : LectorLista::detectarColumnas($filas);
+
+        $avisos = [];
+        if (!empty($sug['ia'])) {
+            $avisos[] = 'Lista leída con IA: ' . ($this->totalFilas - 1) . ' productos.'
+                . (!empty($sug['columna_costo']) ? " Se toma como costo la columna \"{$sug['columna_costo']}\" (podés cambiarla abajo)." : '');
+            if (!empty($sug['precios_con_iva'])) {
+                $this->ivaIncluido = true;
+                $avisos[] = 'Los precios incluyen IVA: se marcó "La lista ya incluye IVA".';
+            }
+        }
+        if (!empty($sug['aviso'])) $avisos[] = $sug['aviso'];
+        $this->aviso = $avisos ? implode(' ', $avisos) : null;
     }
 
     public function sincronizar(): void
@@ -155,9 +176,12 @@ class SubirLista extends Component
             ? Proveedor::firstOrCreate(['nombre' => trim($this->nuevoProveedor)])
             : Proveedor::findOrFail($this->proveedorId);
 
+        $descuento = Precios::descuento($this->descuento) ?? 0;
+        $descuentoTexto = Precios::textoDescuento($this->descuento);
+
         $prov->update($cols + [
-            'descuento'    => Precios::numero($this->descuento) ?? 0,
-            'margen'       => Precios::numero($this->margen) ?? 0,
+            'descuento'       => $descuento,
+            'descuento_texto' => $descuentoTexto,
             'iva_incluido' => $this->ivaIncluido,
         ] + ($this->descargada ? ['lista_url' => trim($this->listaUrl)] : []));
 
@@ -169,9 +193,10 @@ class SubirLista extends Component
                 $f['nombre'],
                 $cols,
                 [
-                    'descuento'    => Precios::numero($this->descuento) ?? 0,
+                    'descuento'       => $descuento,
+                    'descuento_texto' => $descuentoTexto,
                     'iva_incluido' => $this->ivaIncluido,
-                    'sumar_iva'    => $this->sumarIva,
+                    'sumar_iva'    => true,   // se puede cambiar en la revisión
                     'redondeo'     => 0,
                 ]
             );

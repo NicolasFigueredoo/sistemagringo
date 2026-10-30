@@ -156,16 +156,10 @@
                 <label class="block">
                     <span class="label">Descuento del proveedor</span>
                     <div class="relative">
-                        <input wire:model="descuento" type="text" inputmode="decimal" class="input pr-8">
+                        <input wire:model="descuento" type="text" inputmode="decimal" placeholder="ej. 50+13" class="input pr-8">
                         <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
                     </div>
-                </label>
-                <label class="block">
-                    <span class="label">Ganancia</span>
-                    <div class="relative">
-                        <input wire:model="margen" type="text" inputmode="decimal" class="input pr-8">
-                        <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
-                    </div>
+                    <span class="mt-1 block text-xs text-slate-500">Varios descuentos seguidos: 50+13</span>
                 </label>
             </div>
 
@@ -173,10 +167,6 @@
                 <label class="flex items-start gap-3 text-sm">
                     <input wire:model="ivaIncluido" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
                     <span><span class="font-medium text-slate-900">La lista ya incluye IVA</span><span class="block text-slate-500">Se descuenta el IVA para calcular el costo.</span></span>
-                </label>
-                <label class="flex items-start gap-3 text-sm">
-                    <input wire:model="sumarIva" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
-                    <span><span class="font-medium text-slate-900">Sumar IVA (21%) al precio de venta</span></span>
                 </label>
             </div>
         </div>

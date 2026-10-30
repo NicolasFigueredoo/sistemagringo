@@ -30,8 +30,12 @@ class Categorias extends Component
     public function guardar(int $id, string $campo, $valor): void
     {
         if (!in_array($campo, ['margen', 'descuento'], true)) return;
-        $v = trim((string) $valor) === '' ? null : Precios::numero($valor);
-        Categoria::where('id', $id)->update([$campo => $v]);
+        if ($campo === 'descuento') {
+            // acepta descuentos encadenados: "50+13"
+            Categoria::where('id', $id)->update(['descuento' => Precios::descuento($valor), 'descuento_texto' => Precios::textoDescuento($valor)]);
+        } else {
+            Categoria::where('id', $id)->update(['margen' => trim((string) $valor) === '' ? null : Precios::numero($valor)]);
+        }
         $this->mensaje = 'Guardado.';
     }
 

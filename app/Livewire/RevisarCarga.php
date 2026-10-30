@@ -82,10 +82,10 @@ class RevisarCarga extends Component
     {
         if (!$this->editable()) return;
         $margen = ($this->catMargen[$catId] ?? '') === '' ? null : Precios::numero($this->catMargen[$catId]);
-        $desc = ($this->catDescuento[$catId] ?? '') === '' ? null : Precios::numero($this->catDescuento[$catId]);
+        $desc = Precios::descuento($this->catDescuento[$catId] ?? '');   // acepta "50+13"
         if ($margen === null && $desc === null) { $this->error = 'Escribí la ganancia o el descuento para esa categoría.'; return; }
 
-        $n = $this->proc()->aplicarCategoria($this->carga, $catId, $margen, $desc, (bool) ($this->catGuardar[$catId] ?? true));
+        $n = $this->proc()->aplicarCategoria($this->carga, $catId, $margen, $desc, (bool) ($this->catGuardar[$catId] ?? true), Precios::textoDescuento($this->catDescuento[$catId] ?? ''));
         $nombre = Categoria::find($catId)?->nombre;
         $this->mensaje = "Se aplicó a $n productos de \"$nombre\".";
         $this->error = null;
@@ -132,6 +132,13 @@ class RevisarCarga extends Component
         if (!$this->editable()) return;
         $v = Precios::numero($valor);
         if ($v !== null) $this->proc()->cambiarMargen($this->item($id), $v);
+    }
+
+    public function cambiarCosto(int $id, $valor): void
+    {
+        if (!$this->editable()) return;
+        $v = Precios::numero($valor);
+        if ($v !== null && $v > 0) $this->proc()->cambiarCosto($this->item($id), $v);
     }
 
     public function cambiarPrecio(int $id, $valor): void
@@ -317,7 +324,7 @@ class RevisarCarga extends Component
                 $c->cant = $cats[$c->id];
                 // valores por defecto en los inputs: lo guardado en la categoría
                 $this->catMargen[$c->id] ??= $c->margen !== null ? rtrim(rtrim((string) $c->margen, '0'), '.') : '';
-                $this->catDescuento[$c->id] ??= $c->descuento !== null ? rtrim(rtrim((string) $c->descuento, '0'), '.') : '';
+                $this->catDescuento[$c->id] ??= $c->descuento_texto ?: ($c->descuento !== null ? rtrim(rtrim((string) $c->descuento, '0'), '.') : '');
                 $this->catGuardar[$c->id] ??= true;
             });
 

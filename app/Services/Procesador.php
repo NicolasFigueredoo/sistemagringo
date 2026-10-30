@@ -235,6 +235,7 @@ class Procesador
             'tipo'         => 'factura',
             'fotos'        => $fotos,
             'descuento'    => (float) $factura['descuento_general'],
+            'descuento_texto' => $factura['descuento_texto'] ?? null,
             'iva_incluido' => $ivaIncluido,
             'agregar_iva'  => $agregarIva,
             'sumar_iva'    => false,
@@ -269,6 +270,7 @@ class Procesador
                 'tipo'         => $datosCarga['tipo'] ?? 'lista',
                 'fotos'        => $datosCarga['fotos'] ?? null,
                 'descuento'    => (float) $datosCarga['descuento'],
+                'descuento_texto' => $datosCarga['descuento_texto'] ?? null,
                 'iva_incluido' => (bool) $datosCarga['iva_incluido'],
                 'agregar_iva'  => (bool) ($datosCarga['agregar_iva'] ?? false),
                 'sumar_iva'    => (bool) $datosCarga['sumar_iva'],
@@ -423,7 +425,10 @@ class Procesador
                     // la factura ya trae el precio final: el descuento de la categoría es para las listas
                     $desc = $cat?->descuento !== null && !$carga->es_factura ? (float) $cat->descuento : (float) $carga->descuento;
                     $margen = $cat?->margen !== null ? (float) $cat->margen : (float) ($prov?->margen ?? $it->margen);
-                    $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
+                    // costo escrito a mano en la revisión: no se recalcula
+                    $costo = $it->costo_manual
+                        ? (float) $it->costo_nuevo
+                        : Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
 
                     $datos = ['categoria_id' => $catId, 'descuento' => $desc, 'costo_nuevo' => $costo];
                     if ($it->precio_manual) {
@@ -517,17 +522,19 @@ class Procesador
      * Aplica ganancia y/o descuento a todos los renglones de una categoría en esta carga.
      * Si $guardar = true, queda guardado en la categoría para las próximas cargas.
      */
-    public function aplicarCategoria(Carga $carga, int $categoriaId, ?float $margen, ?float $descuento, bool $guardar): int
+    public function aplicarCategoria(Carga $carga, int $categoriaId, ?float $margen, ?float $descuento, bool $guardar, ?string $descuentoTexto = null): int
     {
         if ($guardar) {
-            Categoria::where('id', $categoriaId)->update(['margen' => $margen, 'descuento' => $descuento]);
+            Categoria::where('id', $categoriaId)->update(['margen' => $margen, 'descuento' => $descuento, 'descuento_texto' => $descuentoTexto]);
         }
 
         $items = $carga->items()->where('categoria_id', $categoriaId)->get();
         DB::transaction(function () use ($carga, $items, $margen, $descuento) {
             foreach ($items as $it) {
                 $desc = $descuento ?? (float) $it->descuento;
-                $costo = Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
+                $costo = $it->costo_manual
+                    ? (float) $it->costo_nuevo
+                    : Precios::costo((float) $it->precio_lista, $desc, $carga->iva_incluido, $carga->agregar_iva);
                 $m = $margen ?? (float) $it->margen;
                 $it->update([
                     'descuento'     => $desc,
@@ -549,6 +556,20 @@ class Procesador
             'precio_nuevo'  => Precios::venta((float) $it->costo_nuevo, $margen, $c->sumar_iva, $c->redondeo),
             'precio_manual' => false,
         ]);
+    }
+
+    /** Costo escrito a mano: se mantiene aunque cambien el descuento o el IVA, y la venta se recalcula desde él. */
+    public function cambiarCosto(CargaItem $it, float $costo): void
+    {
+        $c = $it->carga;
+        $costo = round($costo, 2);
+        $datos = ['costo_nuevo' => $costo, 'costo_manual' => true];
+        if ($it->precio_manual) {
+            $datos['margen'] = Precios::margenDesdePrecio($costo, (float) $it->precio_nuevo, $c->sumar_iva);
+        } else {
+            $datos['precio_nuevo'] = Precios::venta($costo, (float) $it->margen, $c->sumar_iva, $c->redondeo);
+        }
+        $it->update($datos);
     }
 
     public function cambiarPrecio(CargaItem $it, float $precio): void

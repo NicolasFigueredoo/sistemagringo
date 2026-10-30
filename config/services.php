@@ -39,6 +39,8 @@ return [
     'anthropic' => [
         'key'   => env('ANTHROPIC_API_KEY'),
         'model' => env('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
+        // listas de precios en PDF: se lee el texto, alcanza un modelo más barato
+        'model_listas' => env('ANTHROPIC_MODEL_LISTAS', 'claude-haiku-5-5'),
         // facturas que se pueden leer por mes (0 = sin tope)
         'facturas_por_mes' => env('FACTURAS_POR_MES', 200),
     ],

@@ -45,6 +45,33 @@ class Precios
     }
 
     /**
+     * Descuento encadenado: "50+13" = 50% y sobre lo que queda 13% más = 56,5% en total.
+     * Acepta "50", "50+13", "50 + 13 + 5", "50%+13%". Vacío = null.
+     */
+    public static function descuento($txt): ?float
+    {
+        if (is_int($txt) || is_float($txt)) return (float) $txt;
+        $txt = trim((string) $txt);
+        if ($txt === '') return null;
+        $queda = 1.0;
+        $alguno = false;
+        foreach (preg_split('/\s*\+\s*/', $txt) as $parte) {
+            $d = self::numero(str_replace('%', '', $parte));
+            if ($d === null) continue;
+            $queda *= 1 - $d / 100;
+            $alguno = true;
+        }
+        return $alguno ? round((1 - $queda) * 100, 4) : null;
+    }
+
+    /** Texto para guardar junto al descuento: solo si es encadenado ("50+13"), si no alcanza con el número. */
+    public static function textoDescuento($txt): ?string
+    {
+        $txt = preg_replace('/\s+/', '', trim((string) $txt));
+        return str_contains($txt, '+') ? mb_substr($txt, 0, 50) : null;
+    }
+
+    /**
      * Convierte texto a número aceptando formato argentino y gringo:
      * "1.234,56" "1234,56" "1,234.56" "1234.56" "$ 4.109,37" "12.500"
      */
