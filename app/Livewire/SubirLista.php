@@ -117,7 +117,7 @@ class SubirLista extends Component
             // PDF con IA: un tramo por pedido (seguirLeyendo), así ningún pedido pasa el límite del servidor
             if (strtolower($f['ext']) === 'pdf' && LectorListaIA::disponible() && !LectorLista::yaLeida($f['ruta'], 'pdf')) {
                 $tramos = LectorListaIA::tramos(LectorLista::textoPdf($f['ruta']), LectorListaIA::TRAMO_WEB);
-                Cache::put($this->claveLectura($f), ['tramos' => $tramos, 'respuestas' => [], 'fallos' => 0], now()->addHours(3));
+                Cache::put($this->claveLectura($f), ['tramos' => $tramos, 'respuestas' => [], 'fallos' => 0, 'control' => LectorLista::textoControl($f['ruta'])], now()->addHours(3));
                 $this->leyendoIA = ['hecho' => 0, 'total' => count($tramos)];
                 $this->preview = [];
                 $this->aviso = null;
@@ -149,7 +149,7 @@ class SubirLista extends Component
         try {
             @set_time_limit(0);
             $pendientes = array_slice(array_diff_key($estado['tramos'], $estado['respuestas']), 0, LectorListaIA::A_LA_VEZ, true);
-            foreach (LectorListaIA::desdeConfig()->intentarVarios($pendientes) as $i => $r) {
+            foreach (LectorListaIA::desdeConfig()->intentarVarios($pendientes, $estado['control'] ?? null) as $i => $r) {
                 if (!$r instanceof \Throwable) { $estado['respuestas'][$i] = $r; continue; }
                 report($r);
                 $estado['fallos'] = ($estado['fallos'] ?? 0) + 1;

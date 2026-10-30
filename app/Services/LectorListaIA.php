@@ -58,11 +58,11 @@ class LectorListaIA
      * @param string $texto salida de pdftotext -layout (páginas separadas por \f)
      * @return array{filas:array, columnas:array, precios_con_iva:bool, columna_costo:?string}
      */
-    public function leer(string $texto): array
+    public function leer(string $texto, ?string $control = null): array
     {
         $respuestas = [];
         foreach (array_chunk(self::tramos($texto), self::A_LA_VEZ) as $grupo) {
-            array_push($respuestas, ...$this->pedirVarios($grupo));
+            array_push($respuestas, ...$this->pedirVarios($grupo, $control));
         }
         return self::aFilas($respuestas);
     }
@@ -92,13 +92,16 @@ class LectorListaIA
     }
 
     /** Varios tramos a la vez (llamadas en paralelo, tardan lo que el más lento). Respuestas en el mismo orden. */
-    public function pedirVarios(array $tramos): array
+    public function pedirVarios(array $tramos, ?string $control = null): array
     {
-        return array_map(fn ($r) => $r instanceof \Throwable ? throw $r : $r, $this->intentarVarios(array_values($tramos)));
+        return array_map(fn ($r) => $r instanceof \Throwable ? throw $r : $r, $this->intentarVarios(array_values($tramos), $control));
     }
 
-    /** Como pedirVarios, pero el tramo que falla vuelve como excepción (para reintentar solo ese). Mantiene las claves. */
-    public function intentarVarios(array $tramos): array
+    /**
+     * Como pedirVarios, pero el tramo que falla vuelve como excepción (para reintentar solo ese). Mantiene las claves.
+     * $control: texto del PDF entero en orden (-raw) para verificar los precios; si no hay, se verifica contra el tramo.
+     */
+    public function intentarVarios(array $tramos, ?string $control = null): array
     {
         // as(): el pool devuelve las respuestas con la misma clave que el tramo
         $resps = Http::pool(fn (Pool $pool) => array_map(fn ($i, $tramo) => $pool->as((string) $i)
@@ -120,7 +123,7 @@ class LectorListaIA
         $res = [];
         foreach ($resps as $i => $resp) {
             try {
-                $res[$i] = self::verificarPrecios($this->respuesta($resp), $tramos[$i]);
+                $res[$i] = self::verificarPrecios($this->respuesta($resp), $control ?? $tramos[$i]);
             } catch (\Throwable $e) {
                 $res[$i] = $e;
             }
@@ -150,7 +153,14 @@ class LectorListaIA
 
         foreach ($desde as $k => $i) {
             $siguientes = array_filter($inicios, fn ($j) => $j > $i);
-            $hasta = min($siguientes ? min($siguientes) : count($lineas), $i + 6);
+            $hasta = min($siguientes ? min($siguientes) : count($lineas), $i + 8);
+            // lo que precede al código en su renglón ("Cód:"): el bloque termina donde empieza el producto siguiente
+            $prefijo = trim(mb_substr($lineas[$i], 0, (int) mb_stripos($lineas[$i], self::codigoDe($items[$k]))));
+            if ($prefijo !== '' && mb_strlen($prefijo) <= 15) {
+                for ($j = $i + 1; $j < $hasta; $j++) {
+                    if (str_starts_with(ltrim($lineas[$j]), $prefijo)) { $hasta = $j; break; }
+                }
+            }
             $bloque = implode("\n", array_slice($lineas, $i, $hasta - $i));
             // importe cortado en dos renglones: "107.903,2" y abajo "5" es 107.903,25
             $bloque = preg_replace('/(\d,\d)[ \t]*\n[ \t]*(\d)(?![\d.,])/', '$1$2', $bloque);
@@ -167,14 +177,22 @@ class LectorListaIA
         return $datos;
     }
 
-    /** Índice del único renglón del tramo que tiene el código como palabra suelta (si está en varios, no se sabe cuál es). */
+    /** Índice del único renglón del texto que tiene el código como palabra suelta (si está en varios, no se sabe cuál es). */
     private static function lineaDelCodigo(array $lineas, string $codigo): ?int
     {
         $codigo = trim($codigo);
         if (mb_strlen($codigo) < 4) return null;
         $patron = '/(?<![\p{L}\p{N}])' . preg_quote($codigo, '/') . '(?![\p{L}\p{N}])/iu';
-        $hay = array_keys(array_filter($lineas, fn ($l) => preg_match($patron, $l)));
+        // stripos primero: el texto de control es el PDF entero
+        $hay = array_keys(array_filter($lineas, fn ($l) => stripos($l, $codigo) !== false && preg_match($patron, $l)));
         return count($hay) === 1 ? $hay[0] : null;
+    }
+
+    /** El código con el que se encontró el renglón del producto (barras o, si no, el del proveedor). */
+    private static function codigoDe(array $it): string
+    {
+        $b = trim((string) ($it['codigo_barras'] ?? ''));
+        return mb_strlen($b) >= 4 ? $b : trim((string) ($it['codigo'] ?? ''));
     }
 
     private function respuesta($resp): array

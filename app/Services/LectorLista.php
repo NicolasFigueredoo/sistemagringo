@@ -20,7 +20,7 @@ class LectorLista
     private const UNIDADES = 'UNIDAD|UNIDADES|UN|UNI|CAJA|CJ|PAQUETE|PAQ|BOLSA|ROLLO|CIEN|MIL|DOCENA|DOC|PAR|JUEGO|JGO|BLISTER|KG|KILO|METRO|MTS|MT|LITRO|LT|PACK|DISPLAY|TIRA|SET|KIT|BIDON|BALDE';
 
     /** Sube la versión cuando cambia la forma de leer, así no se usan lecturas viejas guardadas. */
-    private const VERSION_CACHE = 4;
+    private const VERSION_CACHE = 5;
 
     /**
      * El resultado queda guardado por contenido del archivo: la vista previa y después la carga (o volver a subir
@@ -125,7 +125,7 @@ class LectorLista
         if ($conIA && class_exists(LectorListaIA::class) && function_exists('config') && LectorListaIA::disponible()) {
             try {
                 @set_time_limit(0);
-                $r = LectorListaIA::desdeConfig()->leer($txt);
+                $r = LectorListaIA::desdeConfig()->leer($txt, self::textoControl($ruta));
                 if ($r['filas']) {
                     self::$columnasSugeridas = $r['columnas'];
                     self::$sugerencias = ['ia' => true, 'precios_con_iva' => $r['precios_con_iva'], 'columna_costo' => $r['columna_costo']];
@@ -154,8 +154,21 @@ class LectorLista
         return self::limpiar(self::cortarPorPosicion($lineas));
     }
 
-    /** Texto del PDF con pdftotext -layout (páginas separadas por \f). */
-    public static function textoPdf(string $ruta): string
+    /**
+     * Texto del PDF en el orden en que el PDF guarda cada producto (pdftotext -raw), para controlar los precios de la IA:
+     * según la versión de pdftotext, -layout a veces pega los importes de un producto en el renglón de otro.
+     */
+    public static function textoControl(string $ruta): ?string
+    {
+        try {
+            return self::textoPdf($ruta, true);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Texto del PDF con pdftotext -layout, o -raw con $crudo (páginas separadas por \f). */
+    public static function textoPdf(string $ruta, bool $crudo = false): string
     {
         $bin = function_exists('config') ? (config('odoo.pdftotext') ?: 'pdftotext') : 'pdftotext';
         $bin = trim($bin, " \t\"'");
@@ -166,7 +179,7 @@ class LectorLista
             throw new RuntimeException("No existe el archivo pdftotext: $bin. Revisá PDFTOTEXT_PATH en el .env.");
         }
 
-        [$codigo, $err] = self::ejecutar([$bin, '-layout', '-enc', 'UTF-8', $ruta, $salida]);
+        [$codigo, $err] = self::ejecutar([$bin, $crudo ? '-raw' : '-layout', '-enc', 'UTF-8', $ruta, $salida]);
         if ($codigo !== 0 || !is_file($salida)) {
             @unlink($salida);
             $pista = match (true) {
