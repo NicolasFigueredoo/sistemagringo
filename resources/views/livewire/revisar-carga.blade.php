@@ -6,6 +6,7 @@
         'verde'    => ['badge-green',  'bg-emerald-500', 'Encontrado'],
         'amarillo' => ['badge-yellow', 'bg-amber-500',   'Confirmar'],
         'naranja'  => ['badge-orange', 'bg-orange-500',  'Elegir'],
+        'azul'     => ['badge-blue',   'bg-brand-500',   'Se crea nuevo'],
         'gris'     => ['badge-gray',   'bg-slate-400',   'Sin coincidencia'],
     ];
     $filtros = [
@@ -13,12 +14,13 @@
         'verde'    => ['Encontrados', 'bg-emerald-500'],
         'amarillo' => ['Confirmar', 'bg-amber-500'],
         'naranja'  => ['Elegir', 'bg-orange-500'],
+        'crear'    => ['Se crean', 'bg-brand-500'],
         'gris'     => ['Sin coincidencia', 'bg-slate-400'],
         'rojo'     => ['Cambio mayor a 30%', 'bg-red-500'],
     ];
 @endphp
 <div class="space-y-6">
-    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria" />
+    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria,crearTodos,guardarCrear,crearRapido,quitar" />
 
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -94,7 +96,10 @@
                         </button>
                     @endforeach
                 </div>
-                <p class="mt-1.5 text-xs text-slate-500">Solo se actualiza el costo y se suma el stock. El precio de venta no se toca.</p>
+                <p class="mt-1.5 text-xs text-slate-500">
+                    Solo se actualiza el costo y se suma el stock. El precio de venta no se toca.
+                    @if($otroNombre)<br>El costo se actualiza en los dos Odoo; el stock se suma solo en el Odoo viejo.@endif
+                </p>
             </div>
             @endif
             @if($carga->fotos)
@@ -211,8 +216,22 @@
     @if($pendientes > 0)
         <div class="alert-info items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($pendientes, 0, ',', '.') }}</b> productos no se encontraron por código de barras ni referencia. Revisalos uno por uno: asocialos a un producto de Odoo (y guardá el código para la próxima) o marcá "No hacer nada".</span>
-            <button wire:click="recorrer" class="btn-primary shrink-0 px-3 py-1.5 text-xs"><x-icon name="search" class="h-3.5 w-3.5" /> Revisar uno por uno</button>
+            <span class="flex-1"><b>{{ number_format($pendientes, 0, ',', '.') }}</b> productos no se encontraron por código de barras ni referencia. Revisalos uno por uno: asocialos a un producto de Odoo, crealos nuevos o marcá "No hacer nada".</span>
+            <div class="flex shrink-0 flex-wrap gap-2">
+                <button wire:click="recorrer" class="btn-primary px-3 py-1.5 text-xs"><x-icon name="search" class="h-3.5 w-3.5" /> Revisar uno por uno</button>
+                @unless($carga->es_ajuste)
+                <button wire:click="crearTodos" wire:confirm="Se van a marcar para crear como productos nuevos{{ $otroNombre ? ' (en los dos Odoo)' : '' }} todos los que no se encontraron. Se crean recién al tocar &quot;Actualizar en Odoo&quot;. ¿Seguimos?"
+                        class="btn-secondary px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crear todos como nuevos</button>
+                @endunless
+            </div>
+        </div>
+    @endif
+
+    @if($faltanOtro > 0)
+        <div class="alert-info items-center">
+            <x-icon name="info" class="h-4 w-4 shrink-0" />
+            <span class="flex-1"><b>{{ number_format($faltanOtro, 0, ',', '.') }}</b> productos están en este Odoo pero no en el {{ $otroNombre }}{{ $stockEnOtro ? ': ahí no se actualiza el costo ni se suma el stock' : ': ahí no se actualiza el costo' }}.</span>
+            <button wire:click="crearTodos" class="btn-secondary shrink-0 px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $otroNombre }}</button>
         </div>
     @endif
 
@@ -244,7 +263,7 @@
                 @php [$badge, $dot, $txt] = $estilos[$it->color]; $var = $it->variacion; $grande = $var !== null && abs($var) > 30; if ($it->match === 'ignorado') $txt = 'No hacer nada'; @endphp
                 <tr wire:key="it-{{ $it->id }}" class="{{ $it->error ? 'bg-red-50/60' : ($it->seleccionado ? '' : 'bg-slate-50/50') }}">
                     <td class="text-center">
-                        @if($it->odoo_product_id)
+                        @if($it->odoo_product_id || $it->crear)
                             <input type="checkbox" class="mt-0.5 h-4 w-4 cursor-pointer rounded border-slate-300 text-brand-600 focus:ring-brand-500"
                                    @checked($it->seleccionado) @disabled(!$editable) wire:click="toggle({{ $it->id }})">
                         @endif
@@ -276,6 +295,31 @@
                                     <button wire:click="quitar({{ $it->id }})" class="text-xs font-medium text-slate-500 hover:text-slate-700">No es este</button>
                                 </div>
                             @endif
+                            @if($carga->es_factura && $otroNombre)
+                                <div class="mt-1 text-[11px] {{ $it->otro_product_id ? 'text-slate-500' : 'text-amber-700' }}">
+                                    @if($it->otro_product_id)
+                                        {{ $otroNombre }}: {{ $it->otro_nombre }} @if($it->otro_aplicado)<span class="font-semibold text-emerald-600">· OK</span>@endif
+                                    @elseif($it->crear)
+                                        Se crea también en el {{ $otroNombre }}
+                                        @if($editable)· <button wire:click="cancelarCrear({{ $it->id }})" class="font-medium underline">No crear</button>@endif
+                                    @else
+                                        No está en el {{ $otroNombre }}
+                                        @if($editable)· <button wire:click="crearRapido({{ $it->id }})" class="font-medium text-brand-600 underline">Crearlo ahí</button>@endif
+                                    @endif
+                                </div>
+                            @endif
+                        @elseif($it->crear)
+                            <div class="mt-1 font-medium text-slate-900">{{ $it->crear_nombre }}</div>
+                            <div class="mt-0.5 text-[11px] text-slate-500">
+                                {{ $it->categoria?->nombre ?? 'Sin categoría' }}{{ $otroNombre ? ' · se crea en los dos Odoo' : '' }}
+                                @if($it->guardar_codigo && $it->codigo) · «{{ $it->codigo }}» como {{ $it->guardar_codigo === 'referencia' ? 'referencia interna' : 'código del proveedor' }}@endif
+                            </div>
+                            @if($editable)
+                                <div class="mt-1 flex gap-3">
+                                    <button wire:click="abrirCrear({{ $it->id }})" class="link text-xs">Editar</button>
+                                    <button wire:click="cancelarCrear({{ $it->id }})" class="text-xs font-medium text-slate-500 hover:text-slate-700">No crear</button>
+                                </div>
+                            @endif
                         @else
                             @if($editable)
                                 <div class="mt-2 space-y-1">
@@ -290,6 +334,11 @@
                                         <button wire:click="abrirBuscador({{ $it->id }})" class="btn-secondary px-2.5 py-1 text-xs">
                                             <x-icon name="search" class="h-3.5 w-3.5" /> Buscar producto
                                         </button>
+                                        @unless($carga->es_ajuste)
+                                        <button wire:click="crearRapido({{ $it->id }})" class="btn-secondary px-2.5 py-1 text-xs" title="Se crea al tocar &quot;Actualizar en Odoo&quot;{{ $otroNombre ? ', en los dos Odoo' : '' }}">
+                                            <x-icon name="plus" class="h-3.5 w-3.5" /> Crear nuevo
+                                        </button>
+                                        @endunless
                                         @if($it->match !== 'ignorado')
                                             <button wire:click="ignorar({{ $it->id }})" class="text-xs font-medium text-slate-500 hover:text-slate-700">No hacer nada</button>
                                         @endif
@@ -349,9 +398,9 @@
 
                     @unless($carga->es_ajuste)
                     <td class="text-center">
-                        @if($it->odoo_product_id)
+                        @if($it->odoo_product_id || $it->crear)
                             @if($it->stock_anterior !== null)
-                                <div class="text-xs text-slate-400">Hay {{ $cant($it->stock_anterior) }}</div>
+                                <div class="text-xs text-slate-400">Hay {{ $cant($it->stock_anterior) }}{{ $stockEnOtro ? ' en el viejo' : '' }}</div>
                             @endif
                             <input type="text" inputmode="decimal" placeholder="—" value="{{ $it->cantidad !== null ? $cant($it->cantidad) : '' }}" @disabled(!$editable)
                                    wire:change="cambiarCantidad({{ $it->id }}, $event.target.value)"
@@ -379,10 +428,11 @@
         <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="text-sm text-slate-600">
                 {{ $carga->solo_costo ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
-                @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock. @endif
+                @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock{{ $stockEnOtro ? ' en el Odoo viejo' : '' }}. @endif
+                @if($aCrear) Se crean <span class="font-semibold text-slate-900">{{ number_format($aCrear, 0, ',', '.') }}</span> productos nuevos{{ $otroNombre ? ' (en los dos Odoo)' : '' }}. @endif
             </div>
-            <button wire:click="aplicar" @disabled($seleccionados === 0)
-                    wire:confirm="Vas a actualizar {{ $seleccionados }} productos en Odoo. ¿Confirmás?"
+            <button wire:click="aplicar" @disabled($seleccionados + $aCrear === 0)
+                    wire:confirm="Vas a actualizar {{ $seleccionados }} productos{{ $aCrear ? ' y crear ' . $aCrear . ' nuevos' : '' }} en Odoo. ¿Confirmás?"
                     class="btn-success btn-lg">
                 <x-icon name="check" />
                 Actualizar en Odoo
@@ -462,13 +512,89 @@
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
-                <button wire:click="ignorar({{ $buscando->id }})" class="btn-secondary text-sm" title="No se actualiza y en las próximas listas de este proveedor viene ignorado">
-                    No hacer nada
-                </button>
+                <div class="flex flex-wrap gap-2">
+                    <button wire:click="ignorar({{ $buscando->id }})" class="btn-secondary text-sm" title="No se actualiza y en las próximas listas de este proveedor viene ignorado">
+                        No hacer nada
+                    </button>
+                    @unless($carga->es_ajuste)
+                    <button wire:click="abrirCrear({{ $buscando->id }})" class="btn-primary text-sm">
+                        <x-icon name="plus" class="h-3.5 w-3.5" /> No está: crear producto nuevo
+                    </button>
+                    @endunless
+                </div>
                 @if($recorriendo)
                     <button wire:click="siguiente" class="btn-ghost text-sm">Dejar para después <x-icon name="arrow-right" class="h-3.5 w-3.5" /></button>
                 @endif
             </div>
+        </div>
+    </div>
+    @endif
+    {{-- Crear producto nuevo --}}
+    @if($creando)
+    <div class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-900/30 px-4 py-10" wire:click.self="cerrarCrear">
+        <div class="w-full max-w-xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+            <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div class="min-w-0">
+                    <div class="text-xs font-medium text-slate-500">Producto nuevo · {{ $carga->es_factura ? 'Factura' : 'Lista' }} fila {{ $creando->fila }}@if($recorriendo) · quedan {{ $pendientes }} sin encontrar @endif</div>
+                    <h3 class="mt-0.5 text-base font-semibold text-slate-900">{{ $creando->nombre ?: 'Sin descripción' }}</h3>
+                    <div class="mt-1 flex flex-wrap gap-x-3 text-xs text-slate-500">
+                        @if($creando->codigo)<span>Cód. <b class="font-mono text-slate-700">{{ $creando->codigo }}</b></span>@endif
+                        @if($creando->barcode)<span class="font-mono">{{ $creando->barcode }}</span>@endif
+                        <span>Costo <b class="text-slate-700">{{ $m($creando->costo_nuevo) }}</b></span>
+                        @if((float) $creando->cantidad > 0)<span>Ingresan {{ $cant($creando->cantidad) }}</span>@endif
+                    </div>
+                </div>
+                <button wire:click="cerrarCrear" class="btn-ghost shrink-0 px-1.5 py-1.5"><x-icon name="x" /></button>
+            </div>
+
+            <form wire:submit="guardarCrear" class="space-y-4 p-5">
+                <div>
+                    <label class="label">Nombre en Odoo</label>
+                    <input wire:model="crearNombre" type="text" class="input" autofocus>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-[1fr_10rem]">
+                    <div>
+                        <label class="label">Categoría</label>
+                        <select wire:model.live="crearCategoria" class="input">
+                            <option value="">Sin categoría (la de Odoo por defecto)</option>
+                            @foreach($todasCategorias as $c)
+                                <option value="{{ $c->id }}">{{ $c->nombre }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label">Precio de venta</label>
+                        <div class="relative">
+                            <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                            <input wire:model="crearVenta" type="text" inputmode="decimal" class="input pl-7 text-right">
+                        </div>
+                    </div>
+                </div>
+                @if($creando->codigo)
+                    <div class="rounded-md bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+                        <div class="mb-1.5 font-medium text-slate-700">Guardar el código «{{ $creando->codigo }}» como:</div>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1.5">
+                            <label class="flex items-center gap-1.5 {{ $conPartner ? '' : 'opacity-50' }}" title="{{ $conPartner ? '' : 'Este proveedor no está vinculado a un contacto de Odoo' }}">
+                                <input type="radio" wire:model="guardarCodigo" value="proveedor" @disabled(!$conPartner) class="h-3.5 w-3.5 text-brand-600"> Código del proveedor
+                            </label>
+                            <label class="flex items-center gap-1.5">
+                                <input type="radio" wire:model="guardarCodigo" value="referencia" class="h-3.5 w-3.5 text-brand-600"> Referencia interna
+                            </label>
+                            <label class="flex items-center gap-1.5">
+                                <input type="radio" wire:model="guardarCodigo" value="" class="h-3.5 w-3.5 text-brand-600"> No guardar
+                            </label>
+                        </div>
+                    </div>
+                @endif
+                <p class="text-xs text-slate-500">
+                    Se crea al tocar "Actualizar en Odoo"{{ $otroNombre ? ', en este Odoo y en el ' . $otroNombre . ' (si ahí ya existe con el mismo código o nombre, solo se vincula)' : '' }}.
+                    @if($creando->barcode) Lleva el código de barras {{ $creando->barcode }}. @endif
+                </p>
+                <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
+                    <button type="button" wire:click="cerrarCrear" class="btn-ghost text-sm">Cancelar</button>
+                    <button type="submit" class="btn-primary text-sm"><x-icon name="plus" class="h-3.5 w-3.5" /> {{ $recorriendo ? 'Crear y seguir' : 'Crear' }}</button>
+                </div>
+            </form>
         </div>
     </div>
     @endif

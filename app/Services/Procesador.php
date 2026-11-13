@@ -9,6 +9,7 @@ use App\Models\CodigoProveedor;
 use App\Models\Mapeo;
 use App\Models\OdooProducto;
 use App\Models\Proveedor;
+use App\Support\Instancia;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -21,6 +22,38 @@ use Illuminate\Support\Facades\DB;
 class Procesador
 {
     public function __construct(private OdooClient $odoo) {}
+
+    private ?OtroOdoo $otro = null;
+    private bool $otroListo = false;
+
+    /** El otro Odoo (viejo si se trabaja en el nuevo y al revés), o null si no está configurado. */
+    public function otro(): ?OtroOdoo
+    {
+        if (!$this->otroListo) {
+            $this->otro = OtroOdoo::crear();
+            $this->otroListo = true;
+        }
+        return $this->otro;
+    }
+
+    /** Factura por foto cargada en el Odoo nuevo: el stock se suma en el viejo, no acá. */
+    public function stockEnOtro(Carga $carga): bool
+    {
+        return $carga->es_factura && !Instancia::esViejo() && $this->otro() !== null;
+    }
+
+    /** Factura por foto: cada renglón se busca también en el otro Odoo (costo en los dos, stock en el viejo). */
+    public function vincularOtro(Carga $carga, ?array $soloItemIds = null): void
+    {
+        if (!$carga->es_factura || !$this->otro()) return;
+        $q = $carga->items()->where('otro_aplicado', false);
+        if ($soloItemIds) $q->whereIn('id', $soloItemIds);
+        try {
+            $this->otro()->vincular($carga, $q->get(), $this->stockEnOtro($carga));
+        } catch (\Throwable $e) {
+            report($e);   // sin conexión con el otro Odoo: la carga sigue igual en este
+        }
+    }
 
     /** Baja categorías y productos de Odoo a las tablas locales. */
     public function sincronizarCatalogo(?callable $progreso = null): int
@@ -318,6 +351,7 @@ class Procesador
         // categoría de cada producto encontrado + cuentas
         $this->aplicarReglas($carga);
         $this->traerPreciosActuales($carga);
+        $this->vincularOtro($carga);
         // costo que cambia más de 50%: casi siempre es un precio mal leído; queda sin marcar para revisarlo
         $carga->items()->where('costo_anterior', '>', 0)
             ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > ' . self::CAMBIO_SOSPECHOSO)
@@ -421,7 +455,8 @@ class Procesador
 
             DB::transaction(function () use ($chunk, $prodCat, $categorias, $carga, $prov) {
                 foreach ($chunk as $it) {
-                    $catId = $it->odoo_product_id ? ($prodCat[$it->odoo_product_id] ?? null) : null;
+                    // producto a crear: la categoría elegida para crearlo
+                    $catId = $it->odoo_product_id ? ($prodCat[$it->odoo_product_id] ?? null) : ($it->crear ? $it->crear_categ_id : null);
                     $cat = $catId ? $categorias->get($catId) : null;
 
                     // la factura ya trae el precio final: el descuento de la categoría es para las listas
@@ -481,9 +516,61 @@ class Procesador
             'match'           => 'manual',
             'seleccionado'    => true,
             'guardar_codigo'  => $item->codigo && in_array($guardarCodigo, ['proveedor', 'referencia'], true) ? $guardarCodigo : null,
+            'crear'           => false, 'crear_nombre' => null, 'crear_categ_id' => null,
         ]);
         $this->aplicarReglas($item->carga, [$item->id]);
         $this->traerPreciosActuales($item->carga, [$item->id]);
+        $this->vincularOtro($item->carga, [$item->id]);
+    }
+
+    /**
+     * Marca el renglón para crear el producto al tocar "Actualizar en Odoo" (en los dos Odoo).
+     * Si ya está en este Odoo y falta en el otro, solo se crea en el otro.
+     * @param string|null $guardarCodigo proveedor | referencia | '' (no guardar) | null (lo de siempre)
+     */
+    public function marcarCrear(CargaItem $item, ?string $nombre = null, ?int $categId = null, ?float $venta = null, ?string $guardarCodigo = null): void
+    {
+        $carga = $item->carga;
+        $nuevo = !$item->odoo_product_id;
+        $porDefecto = $carga->proveedor?->odoo_partner_id ? 'proveedor' : 'referencia';
+        $guardar = match (true) {
+            !$nuevo || !$item->codigo => $item->guardar_codigo,
+            $guardarCodigo === ''     => null,
+            in_array($guardarCodigo, ['proveedor', 'referencia'], true) => $guardarCodigo,
+            default                   => $item->guardar_codigo ?? $porDefecto,
+        };
+        $item->update([
+            'crear'          => true,
+            'crear_nombre'   => mb_substr(trim((string) ($nombre ?: $item->crear_nombre ?: $item->odoo_nombre ?: $item->nombre)) ?: 'Producto sin nombre', 0, 250),
+            'crear_categ_id' => $nuevo ? $categId : null,
+            'match'          => $nuevo ? 'crear' : $item->match,
+            'seleccionado'   => true,
+            'guardar_codigo' => $guardar,
+        ]);
+        if (!$nuevo) return;
+        $item->update(['precio_manual' => false]);
+        $this->aplicarReglas($carga, [$item->id]);
+        if ($venta !== null && $venta > 0 && abs($venta - (float) $item->fresh()->precio_nuevo) >= 0.01) {
+            $this->cambiarPrecio($item->fresh(), $venta);
+        }
+    }
+
+    public function cancelarCrear(CargaItem $item): void
+    {
+        $nuevo = $item->match === 'crear';
+        $item->update(['crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null] + ($nuevo
+            ? ['match' => 'ninguno', 'seleccionado' => false, 'categoria_id' => null, 'guardar_codigo' => null, 'precio_manual' => false]
+            : []));
+    }
+
+    /** Categoría probable para un producto nuevo: la del primer parecido, o la más común en esta carga. */
+    public function categoriaSugerida(CargaItem $item): ?int
+    {
+        $cand = $item->candidatos[0]['id'] ?? null;
+        if ($cand && ($c = OdooProducto::where('id', $cand)->value('categ_id'))) return (int) $c;
+        $c = $item->carga->items()->whereNotNull('categoria_id')->selectRaw('categoria_id, COUNT(*) as n')
+            ->groupBy('categoria_id')->orderByDesc('n')->value('categoria_id');
+        return $c ? (int) $c : null;
     }
 
     /** "No hacer nada": el renglón no se usa y al aplicar se recuerda para las próximas listas del proveedor. */
@@ -492,6 +579,7 @@ class Procesador
         $item->update([
             'odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ignorado', 'seleccionado' => false,
             'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null, 'stock_anterior' => null,
+            'crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null, 'otro_product_id' => null, 'otro_nombre' => null,
         ]);
     }
 
@@ -595,7 +683,8 @@ class Procesador
 
     private function pendientes(Carga $carga)
     {
-        return $carga->items()->where('seleccionado', true)->where('aplicado', false)->whereNotNull('odoo_product_id');
+        return $carga->items()->where('seleccionado', true)->where('aplicado', false)
+            ->where(fn ($q) => $q->whereNotNull('odoo_product_id')->orWhere('crear', true));
     }
 
     /** Deja la carga "aplicando" con el total a procesar. Las tandas las corre el job AplicarCarga. Devuelve el total. */
@@ -615,10 +704,21 @@ class Procesador
     {
         @set_time_limit(0);
         // los que dieron error en esta pasada quedan con el mensaje y no se vuelven a tomar
-        $items = $this->pendientes($carga)->whereNull('error')->orderBy('id')->limit($tamano)->get();
+        $base = fn () => $this->pendientes($carga)->whereNull('error')->orderBy('id');
+        // los que hay que crear van primero y en tandas chicas (cada uno son varios pedidos a los dos Odoo)
+        $items = $base()->where('crear', true)->limit(10)->get();
+        if ($items->isEmpty()) $items = $base()->limit($tamano)->get();
         if ($items->isEmpty()) {
             $this->terminarAplicacion($carga);
             return 0;
+        }
+        $todos = $items;
+
+        [$erroresCrear, $avisosCrear] = [[], []];
+        $aCrear = $items->filter(fn ($it) => $it->crear);
+        if ($aCrear->isNotEmpty()) {
+            [$erroresCrear, $avisosCrear] = (new CreadorProductos($this->odoo, $this->otro()))->crear($carga, $aCrear);
+            $items = $items->reject(fn ($it) => isset($erroresCrear[$it->id]))->values();
         }
 
         // refrescar "anterior" justo antes de escribir, para que Deshacer sea exacto
@@ -632,21 +732,33 @@ class Procesador
         // códigos elegidos al asociar a mano (solo de los que se actualizaron bien)
         $erroresCodigo = $this->guardarCodigos($carga, $items->filter(fn ($it) => $it->guardar_codigo && !isset($errores[$it->id])));
 
+        // factura: el costo también en el otro Odoo; el stock, en el viejo (si la carga es del nuevo, se suma allá)
+        $enOtro = $this->stockEnOtro($carga);
+        $avisosOtro = [];
+        if ($carga->es_factura && $this->otro()) {
+            try {
+                $avisosOtro = $this->otro()->aplicar($items->reject(fn ($it) => isset($errores[$it->id]))->values(), $enOtro);
+            } catch (\Throwable $e) {
+                foreach ($items as $it) $avisosOtro[$it->id] = $this->otro()->nombre() . ': ' . $e->getMessage();
+            }
+        }
+
         // stock que ingresa: se suma solo a los que se actualizaron bien
-        $conStock = $items->filter(fn ($it) => !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
+        $conStock = $items->filter(fn ($it) => !$enOtro && !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
         $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
             $conStock->groupBy('odoo_product_id')->map(fn ($g) => (float) $g->sum('cantidad'))->all()
         );
 
-        DB::transaction(function () use ($carga, $items, $campos, $errores, $conStock, $erroresStock, $erroresCodigo) {
-            foreach ($items as $it) {
+        $errores += $erroresCrear;
+        DB::transaction(function () use ($carga, $todos, $campos, $errores, $conStock, $erroresStock, $erroresCodigo, $avisosCrear, $avisosOtro) {
+            foreach ($todos as $it) {
                 if (isset($errores[$it->id])) {
                     $it->update(['error' => mb_substr($errores[$it->id], 0, 250)]);
                     continue;
                 }
                 // el precio quedó; si el stock falló se avisa en el renglón
                 $errStock = $conStock->has($it->id) ? ($erroresStock[$it->odoo_product_id] ?? null) : null;
-                $aviso = implode(' · ', array_filter([$errStock, $erroresCodigo[$it->id] ?? null]));
+                $aviso = implode(' · ', array_filter([$errStock, $erroresCodigo[$it->id] ?? null, $avisosCrear[$it->id] ?? null, $avisosOtro[$it->id] ?? null]));
                 $it->update([
                     'aplicado'       => true,
                     'stock_aplicado' => $it->stock_aplicado || ($conStock->has($it->id) && !$errStock),
@@ -656,7 +768,7 @@ class Procesador
                 self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
 
                 // si lo confirmó una persona, recordarlo para la próxima
-                if (in_array($it->match, ['manual', 'nombre'], true)) {
+                if (in_array($it->match, ['manual', 'nombre', 'creado'], true)) {
                     foreach (Matcher::claves($it->barcode, $it->codigo, $it->nombre) as $clave) {
                         Mapeo::updateOrCreate(
                             ['proveedor_id' => $carga->proveedor_id, 'clave' => mb_substr($clave, 0, 250)],
@@ -666,12 +778,12 @@ class Procesador
                 }
             }
             $carga->update([
-                'progreso_hecho'   => $carga->progreso_hecho + $items->count(),
+                'progreso_hecho'   => $carga->progreso_hecho + $todos->count(),
                 'progreso_errores' => $carga->progreso_errores + count($errores),
             ]);
         });
 
-        return $items->count();
+        return $todos->count();
     }
 
     private function terminarAplicacion(Carga $carga): void
@@ -738,7 +850,16 @@ class Procesador
         $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_anterior, $it->precio_anterior)])->all();
         $errores = $this->escribir($items, $campos);
 
-        $conStock = $carga->items()->where('stock_aplicado', true)->get();
+        $enOtro = $this->stockEnOtro($carga);
+        if ($carga->es_factura && $this->otro()) {
+            try {
+                $errores += array_map(fn ($e) => $this->otro()->nombre() . ': ' . $e, $this->otro()->deshacer($carga, $enOtro));
+            } catch (\Throwable $e) {
+                $errores[0] = $this->otro()->nombre() . ': ' . $e->getMessage();
+            }
+        }
+
+        $conStock = $enOtro ? collect() : $carga->items()->where('stock_aplicado', true)->get();
         $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
             $conStock->groupBy('odoo_product_id')->map(fn ($g) => -(float) $g->sum('cantidad'))->all()
         );

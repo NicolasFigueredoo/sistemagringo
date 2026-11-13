@@ -11,6 +11,8 @@ class CargaItem extends Model
         'candidatos'    => 'array',
         'seleccionado'  => 'boolean',
         'aplicado'      => 'boolean',
+        'crear'         => 'boolean',
+        'otro_aplicado' => 'boolean',
         'precio_manual' => 'boolean',
         'costo_manual'  => 'boolean',
     ];
@@ -18,11 +20,12 @@ class CargaItem extends Model
     public function carga() { return $this->belongsTo(Carga::class); }
     public function categoria() { return $this->belongsTo(Categoria::class); }
 
-    /** verde | amarillo | naranja | gris */
+    /** verde | azul (se crea) | amarillo | naranja | gris */
     public function getColorAttribute(): string
     {
         return match ($this->match) {
-            'barcode', 'mapeo', 'codigo', 'manual', 'categoria' => 'verde',
+            'barcode', 'mapeo', 'codigo', 'manual', 'categoria', 'creado' => 'verde',
+            'crear'    => 'azul',
             'nombre'   => 'amarillo',
             'parecido' => 'naranja',
             default    => 'gris',

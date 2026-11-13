@@ -19,13 +19,36 @@ class OdooClient
         private string $db,
         private string $user,
         private string $apiKey,
+        private $stockLocationId = null,
     ) {
         $this->url = rtrim($url, '/');
     }
 
     public static function desdeConfig(): self
     {
-        return new self(config('odoo.url'), config('odoo.db'), config('odoo.user'), config('odoo.api_key'));
+        return self::desdeArray(config('odoo'));
+    }
+
+    /** @param array $c url, db, user, api_key, stock_location_id */
+    public static function desdeArray(array $c): self
+    {
+        return new self((string) $c['url'], (string) $c['db'], (string) $c['user'], (string) $c['api_key'], $c['stock_location_id'] ?? null);
+    }
+
+    private ?array $camposTipo = null;
+
+    /** Campos para que un producto nuevo lleve stock: Odoo 18+ usa is_storable, 16-17 detailed_type, antes type. */
+    public function camposAlmacenable(): array
+    {
+        if ($this->camposTipo === null) {
+            $f = $this->call('product.product', 'fields_get', [], ['attributes' => ['type']]);
+            $this->camposTipo = match (true) {
+                isset($f['is_storable'])   => ['type' => 'consu', 'is_storable' => true],
+                isset($f['detailed_type']) => ['detailed_type' => 'product'],
+                default                    => ['type' => 'product'],
+            };
+        }
+        return $this->camposTipo;
     }
 
     private function payload(string $service, string $method, array $args): array
@@ -95,7 +118,7 @@ class OdooClient
     public function ubicacionStock(): int
     {
         if ($this->ubicacion === null) {
-            $id = config('odoo.stock_location_id');
+            $id = $this->stockLocationId;
             if (!$id) {
                 $wh = $this->searchRead('stock.warehouse', [], ['lot_stock_id'], 0, 1);
                 $id = is_array($wh[0]['lot_stock_id'] ?? null) ? $wh[0]['lot_stock_id'][0] : null;

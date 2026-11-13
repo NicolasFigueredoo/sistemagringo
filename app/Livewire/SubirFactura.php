@@ -70,11 +70,26 @@ class SubirFactura extends Component
     public function sincronizar(): void
     {
         try {
+            @set_time_limit(0);
             $n = (new Procesador(OdooClient::desdeConfig()))->sincronizarCatalogo();
             $this->aviso = "Catálogo actualizado: $n productos.";
             $this->error = null;
         } catch (\Throwable $e) {
             $this->error = 'No se pudo conectar con Odoo: ' . $e->getMessage();
+            return;
+        }
+
+        // la factura también se busca en el otro Odoo: bajar su catálogo
+        if (!Instancia::hayOtro()) return;
+        $viejo = Instancia::esViejo();
+        try {
+            Instancia::usar(!$viejo);
+            $m = (new Procesador(OdooClient::desdeConfig()))->sincronizarCatalogo();
+            $this->aviso .= ' En el ' . ($viejo ? 'Odoo nuevo' : 'Odoo viejo') . ": $m productos.";
+        } catch (\Throwable $e) {
+            $this->error = 'No se pudo bajar el catálogo del ' . ($viejo ? 'Odoo nuevo' : 'Odoo viejo') . ': ' . $e->getMessage();
+        } finally {
+            Instancia::usar($viejo);
         }
     }
 

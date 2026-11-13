@@ -24,7 +24,7 @@ class RevisarCarga extends Component
 {
     use WithPagination;
 
-    private const VERDES = ['barcode', 'mapeo', 'codigo', 'manual', 'categoria'];
+    private const VERDES = ['barcode', 'mapeo', 'codigo', 'manual', 'categoria', 'creado'];
     /** no se encontraron por código de barras ni referencia: hay que revisarlos a mano */
     private const PENDIENTES = ['nombre', 'parecido', 'ninguno'];
 
@@ -46,6 +46,12 @@ class RevisarCarga extends Component
     public string $busqueda = '';
     public string $guardarCodigo = '';   // '' | proveedor | referencia
     public bool $recorriendo = false;    // al asociar o saltear pasa al siguiente sin encontrar
+
+    // producto nuevo: se crea al tocar "Actualizar en Odoo", en los dos Odoo
+    public ?int $creandoItem = null;
+    public string $crearNombre = '';
+    public $crearCategoria = '';
+    public string $crearVenta = '';
 
     public ?string $mensaje = null;
     public ?string $error = null;
@@ -159,7 +165,7 @@ class RevisarCarga extends Component
     {
         if (!$this->editable()) return;
         $it = $this->item($id);
-        if (!$it->odoo_product_id) return;
+        if (!$it->odoo_product_id && !$it->crear) return;
         $it->update(['seleccionado' => !$it->seleccionado]);
     }
 
@@ -213,7 +219,98 @@ class RevisarCarga extends Component
     public function quitar(int $id): void
     {
         if (!$this->editable()) return;
-        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null]);
+        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null,
+            'crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null]);
+        $this->proc()->vincularOtro($this->carga, [$id]);
+    }
+
+    /** Abre la ficha para crear el producto (nombre, categoría, venta y dónde guardar el código). */
+    public function abrirCrear(int $id): void
+    {
+        if (!$this->editable()) return;
+        $it = $this->item($id);
+        $this->buscandoItem = null;
+        $this->creandoItem = $id;
+        $this->crearNombre = (string) ($it->crear_nombre ?: $it->nombre);
+        $this->crearCategoria = (string) ($it->crear ? $it->crear_categ_id : $this->proc()->categoriaSugerida($it));
+        $this->guardarCodigo = $it->guardar_codigo ?? ($it->codigo ? ($this->carga->proveedor?->odoo_partner_id ? 'proveedor' : 'referencia') : '');
+        $this->crearVenta = $it->crear ? number_format((float) $it->precio_nuevo, 2, ',', '.') : $this->ventaSugerida($it);
+    }
+
+    /** Al cambiar la categoría, la venta se recalcula con su ganancia (o la del proveedor). */
+    public function updatedCrearCategoria(): void
+    {
+        if ($this->creandoItem) $this->crearVenta = $this->ventaSugerida($this->item($this->creandoItem));
+    }
+
+    private function ventaSugerida(CargaItem $it): string
+    {
+        $cat = $this->crearCategoria !== '' ? Categoria::find((int) $this->crearCategoria) : null;
+        $margen = $cat?->margen !== null ? (float) $cat->margen : (float) ($this->carga->proveedor?->margen ?? $it->margen);
+        $venta = Precios::venta((float) $it->costo_nuevo, $margen, $this->carga->sumar_iva, (int) $this->carga->redondeo);
+        return number_format($venta, 2, ',', '.');
+    }
+
+    public function guardarCrear(): void
+    {
+        if (!$this->editable() || !$this->creandoItem) return;
+        if (trim($this->crearNombre) === '') { $this->error = 'Escribí el nombre del producto nuevo.'; return; }
+        $it = $this->item($this->creandoItem);
+        $this->proc()->marcarCrear($it, $this->crearNombre, $this->crearCategoria !== '' ? (int) $this->crearCategoria : null,
+            Precios::numero($this->crearVenta), $this->guardarCodigo);
+        $this->error = null;
+        $recorriendo = $this->recorriendo;
+        $this->cerrarCrear();
+        if ($recorriendo) { $this->recorriendo = true; $this->buscandoItem = $it->id; $this->siguiente(); }
+    }
+
+    /** Un toque: se crea con el nombre de la factura/lista y la categoría sugerida. */
+    public function crearRapido(int $id): void
+    {
+        if (!$this->editable()) return;
+        $it = $this->item($id);
+        $this->proc()->marcarCrear($it, null, $it->odoo_product_id ? null : $this->proc()->categoriaSugerida($it));
+    }
+
+    public function cancelarCrear(int $id): void
+    {
+        if (!$this->editable()) return;
+        $this->proc()->cancelarCrear($this->item($id));
+    }
+
+    /** Marca para crear todos los que no se encontraron (y, en facturas, los que faltan en el otro Odoo). */
+    public function crearTodos(): void
+    {
+        if (!$this->editable()) return;
+        $proc = $this->proc();
+        $n = 0;
+        foreach ($this->carga->items()->whereIn('match', ['ninguno', 'parecido'])->whereNull('odoo_product_id')->where('crear', false)->get() as $it) {
+            $proc->marcarCrear($it, null, $proc->categoriaSugerida($it));
+            $n++;
+        }
+        foreach ($this->faltanEnOtro()->get() as $it) {
+            $proc->marcarCrear($it);
+            $n++;
+        }
+        $this->mensaje = "Se van a crear $n productos al tocar \"Actualizar en Odoo\". Podés cambiar el nombre o la categoría de cada uno con \"Editar\".";
+        $this->filtro = 'crear';
+        $this->resetPage();
+    }
+
+    public function cerrarCrear(): void
+    {
+        $this->creandoItem = null;
+        $this->crearNombre = $this->crearVenta = $this->guardarCodigo = '';
+        $this->crearCategoria = '';
+        $this->recorriendo = false;
+    }
+
+    /** Factura: renglones que están en este Odoo pero no en el otro (ahí no se actualiza el costo ni el stock). */
+    private function faltanEnOtro()
+    {
+        $hay = $this->carga->es_factura && $this->proc()->otro();
+        return $this->carga->items()->whereNotNull('odoo_product_id')->whereNull('otro_product_id')
+            ->where('crear', false)->where('seleccionado', true)->when(!$hay, fn ($q) => $q->whereRaw('1 = 0'));
     }
 
     public function abrirBuscador(int $id): void
@@ -277,6 +374,7 @@ class RevisarCarga extends Component
             'verde'    => $q->whereIn('match', self::VERDES),
             'amarillo' => $q->where('match', 'nombre'),
             'naranja'  => $q->where('match', 'parecido'),
+            'crear'    => $q->where('crear', true),
             'gris'     => $q->whereIn('match', ['ninguno', 'ignorado']),
             'rojo'     => $q->whereNotNull('costo_anterior')->where('costo_anterior', '>', 0)
                             ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > 0.30'),
@@ -312,6 +410,7 @@ class RevisarCarga extends Component
             'verde'    => (clone $base)->whereIn('match', self::VERDES)->count(),
             'amarillo' => (clone $base)->where('match', 'nombre')->count(),
             'naranja'  => (clone $base)->where('match', 'parecido')->count(),
+            'crear'    => (clone $base)->where('crear', true)->count(),
             'gris'     => (clone $base)->whereIn('match', ['ninguno', 'ignorado'])->count(),
             'rojo'     => $this->filtrarCon('rojo')->count(),
         ];
@@ -328,6 +427,9 @@ class RevisarCarga extends Component
                 $this->catGuardar[$c->id] ??= true;
             });
 
+        // facturas: también se actualiza el otro Odoo; en listas, el otro solo se usa al crear productos
+        $otro = $this->proc()->otro();
+
         return view('livewire.revisar-carga', [
             'categorias'   => $categorias,
             'items'        => $this->filtrar($this->carga->items())->orderBy('fila')->paginate(50),
@@ -341,6 +443,12 @@ class RevisarCarga extends Component
                                 ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > ' . Procesador::CAMBIO_SOSPECHOSO)->count() : 0,
             'conPartner'   => (bool) $this->carga->proveedor?->odoo_partner_id,
             'editable'     => $this->editable(),
+            'aCrear'       => (clone $base)->where('crear', true)->where('seleccionado', true)->count(),
+            'faltanOtro'   => $this->editable() ? $this->faltanEnOtro()->count() : 0,
+            'otroNombre'   => $otro?->nombre(),
+            'stockEnOtro'  => $this->proc()->stockEnOtro($this->carga),
+            'creando'      => $this->creandoItem ? $this->item($this->creandoItem) : null,
+            'todasCategorias' => $this->creandoItem ? Categoria::orderBy('nombre')->get(['id', 'nombre']) : collect(),
         ]);
     }
 

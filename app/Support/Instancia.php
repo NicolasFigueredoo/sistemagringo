@@ -35,6 +35,39 @@ class Instancia
         return (bool) config('odoo.es_viejo', false);
     }
 
+    /** Configuración del Odoo nuevo tal como vino del .env (aunque ahora se esté usando el viejo). */
+    private static function base(): array
+    {
+        return self::$original['odoo'] ?? config('odoo');
+    }
+
+    /** El otro Odoo está configurado (usuario y API key) y tiene su base local. */
+    public static function hayOtro(): bool
+    {
+        $c = self::configOtro();
+        if (empty($c['user']) || empty($c['api_key'])) return false;
+        $db = config('database.connections.' . self::conexionOtra() . '.database');
+        return $db && is_file($db);
+    }
+
+    /** url, db, user, api_key y stock_location_id del otro Odoo. */
+    public static function configOtro(): array
+    {
+        $o = self::base();
+        return self::esViejo() ? $o : $o['viejo'] + ['stock_location_id' => null];
+    }
+
+    /** Conexión a la base local del otro Odoo (catálogo, categorías, proveedores). */
+    public static function conexionOtra(): string
+    {
+        return self::esViejo() ? (self::$original['db'] ?? config('database.principal') ?? 'sqlite') : 'sqlite_viejo';
+    }
+
+    public static function nombreOtro(): string
+    {
+        return self::esViejo() ? 'Odoo nuevo' : 'Odoo viejo';
+    }
+
     /** route() que se queda en la misma instancia: en el Odoo viejo usa las rutas "viejo.*". */
     public static function ruta(string $nombre, mixed $parametros = []): string
     {
