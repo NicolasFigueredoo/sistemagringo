@@ -8,21 +8,18 @@
 <body class="min-h-full">
     @php
         $viejo = \App\Support\Instancia::esViejo();
-        // "Odoo nuevo" -> "Cargar factura nuevo"
-        $factura = fn (bool $v) => 'Cargar factura ' . mb_strtolower(trim(preg_replace('/^odoo\s*/i', '', \App\Support\Instancia::nombre($v))));
         $nav = $viejo ? [
-            ['viejo.subir.factura', $factura(true), 'camera', ['viejo.subir.factura', 'viejo.revisar']],
+            ['viejo.subir.factura', 'Cargar factura nuevo y viejo', 'camera', ['viejo.subir.factura', 'viejo.revisar']],
             ['viejo.historial', 'Historial', 'clock', ['viejo.historial']],
-            ['subir.factura', $factura(false), 'camera', []],
             ['subir', 'Volver', 'undo', []],
         ] : [
-            ['subir', 'Cargar lista', 'file', ['subir', 'revisar']],
+            ['subir', 'Cargar lista', 'file', ['subir', 'subir.factura', 'revisar']],
             ['costos', 'Costos', 'check', ['costos']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
             ['reajustar', 'Reajustar', 'zap', ['reajustar']],
-            ['viejo.subir.factura', $factura(true), 'camera', []],
-            ['subir.factura', $factura(false), 'camera', ['subir.factura']],
+            // una sola carga actualiza los dos Odoo
+            ['viejo.subir.factura', 'Cargar factura nuevo y viejo', 'camera', []],
         ];
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
