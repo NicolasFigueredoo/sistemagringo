@@ -13,6 +13,8 @@ class CargaItem extends Model
         'aplicado'      => 'boolean',
         'crear'         => 'boolean',
         'otro_aplicado' => 'boolean',
+        'stock_aplicado'      => 'boolean',
+        'otro_stock_aplicado' => 'boolean',
         'precio_manual' => 'boolean',
         'costo_manual'  => 'boolean',
     ];

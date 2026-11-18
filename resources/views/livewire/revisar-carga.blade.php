@@ -18,9 +18,12 @@
         'gris'     => ['Sin coincidencia', 'bg-slate-400'],
         'rojo'     => ['Cambio mayor a 30%', 'bg-red-500'],
     ];
+    if ($dosOdoo) $filtros = array_slice($filtros, 0, 5, true) + ['falta' => ['Falta en un Odoo', 'bg-amber-500']] + $filtros;
+    // "Odoo viejo" -> "viejo"
+    $corto = fn($n) => trim(preg_replace('/^odoo\s*/i', '', (string) $n)) ?: $n;
 @endphp
 <div class="space-y-6">
-    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria,crearTodos,guardarCrear,crearRapido,quitar" />
+    <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria,crearTodos,crearEnOtro,crearEnEste,guardarCrear,crearRapido,quitar" />
 
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -98,7 +101,7 @@
                 </div>
                 <p class="mt-1.5 text-xs text-slate-500">
                     Solo se actualiza el costo y se suma el stock. El precio de venta no se toca.
-                    @if($otroNombre)<br>El costo se actualiza en los dos Odoo; el stock se suma solo en el Odoo viejo.@endif
+                    @if($otroNombre)<br>Se busca en el {{ $esteNombre }} y en el {{ $otroNombre }}: el costo se actualiza y el stock se suma en los dos. Si falta en uno, se puede crear con los datos del otro.@endif
                 </p>
             </div>
             @endif
@@ -230,8 +233,22 @@
     @if($faltanOtro > 0)
         <div class="alert-info items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($faltanOtro, 0, ',', '.') }}</b> productos están en este Odoo pero no en el {{ $otroNombre }}{{ $stockEnOtro ? ': ahí no se actualiza el costo ni se suma el stock' : ': ahí no se actualiza el costo' }}.</span>
-            <button wire:click="crearTodos" class="btn-secondary shrink-0 px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $otroNombre }}</button>
+            <span class="flex-1"><b>{{ number_format($faltanOtro, 0, ',', '.') }}</b> productos están en el {{ $esteNombre }} pero <b>no existen en el {{ $otroNombre }}</b>: ahí no se actualiza el costo ni se suma el stock.</span>
+            <div class="flex shrink-0 flex-wrap gap-2">
+                <button wire:click="$set('filtro', 'falta')" class="btn-secondary px-3 py-1.5 text-xs">Ver cuáles</button>
+                <button wire:click="crearEnOtro" class="btn-secondary px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $otroNombre }}</button>
+            </div>
+        </div>
+    @endif
+
+    @if($faltanEste > 0)
+        <div class="alert-info items-center">
+            <x-icon name="info" class="h-4 w-4 shrink-0" />
+            <span class="flex-1"><b>{{ number_format($faltanEste, 0, ',', '.') }}</b> productos están en el {{ $otroNombre }} pero <b>no existen en el {{ $esteNombre }}</b>. Se pueden crear acá con los datos del {{ $otroNombre }} (nombre, categoría, venta, códigos).</span>
+            <div class="flex shrink-0 flex-wrap gap-2">
+                <button wire:click="$set('filtro', 'falta')" class="btn-secondary px-3 py-1.5 text-xs">Ver cuáles</button>
+                <button wire:click="crearEnEste" class="btn-secondary px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $esteNombre }}</button>
+            </div>
         </div>
     @endif
 
@@ -285,7 +302,7 @@
                     <td class="max-w-sm">
                         <span class="{{ $badge }}"><span class="dot {{ $dot }}"></span>{{ $txt }}</span>
                         @if($it->odoo_product_id)
-                            <div class="mt-1 font-medium text-slate-900">{{ $it->odoo_nombre }}</div>
+                            <div class="mt-1 font-medium text-slate-900">@if($dosOdoo)<span class="text-[11px] font-normal text-slate-500">{{ $esteNombre }}:</span> @endif{{ $it->odoo_nombre }}</div>
                             @if($it->guardar_codigo)
                                 <div class="mt-0.5 text-[11px] text-brand-600">Se guarda «{{ $it->codigo }}» como {{ $it->guardar_codigo === 'referencia' ? 'referencia interna' : 'código del proveedor' }}</div>
                             @endif
@@ -300,10 +317,10 @@
                                     @if($it->otro_product_id)
                                         {{ $otroNombre }}: {{ $it->otro_nombre }} @if($it->otro_aplicado)<span class="font-semibold text-emerald-600">· OK</span>@endif
                                     @elseif($it->crear)
-                                        Se crea también en el {{ $otroNombre }}
+                                        No existe en el {{ $otroNombre }}: se crea ahí con estos datos
                                         @if($editable)· <button wire:click="cancelarCrear({{ $it->id }})" class="font-medium underline">No crear</button>@endif
                                     @else
-                                        No está en el {{ $otroNombre }}
+                                        <b>No existe en el {{ $otroNombre }}</b>
                                         @if($editable)· <button wire:click="crearRapido({{ $it->id }})" class="font-medium text-brand-600 underline">Crearlo ahí</button>@endif
                                     @endif
                                 </div>
@@ -311,7 +328,9 @@
                         @elseif($it->crear)
                             <div class="mt-1 font-medium text-slate-900">{{ $it->crear_nombre }}</div>
                             <div class="mt-0.5 text-[11px] text-slate-500">
-                                {{ $it->categoria?->nombre ?? 'Sin categoría' }}{{ $otroNombre ? ' · se crea en los dos Odoo' : '' }}
+                                {{ $it->categoria?->nombre ?? 'Sin categoría' }}
+                                @if($dosOdoo && $it->otro_product_id) · se crea en el {{ $esteNombre }} con los datos del {{ $otroNombre }} ({{ $it->otro_nombre }})
+                                @elseif($otroNombre) · se crea en los dos Odoo @endif
                                 @if($it->guardar_codigo && $it->codigo) · «{{ $it->codigo }}» como {{ $it->guardar_codigo === 'referencia' ? 'referencia interna' : 'código del proveedor' }}@endif
                             </div>
                             @if($editable)
@@ -321,6 +340,17 @@
                                 </div>
                             @endif
                         @else
+                            @if($dosOdoo && $it->otro_product_id)
+                                <div class="mt-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 ring-1 ring-amber-600/20">
+                                    <div><b>No existe en el {{ $esteNombre }}.</b> En el {{ $otroNombre }}: {{ $it->otro_nombre }}</div>
+                                    @if($editable)
+                                        <div class="mt-1 flex flex-wrap gap-3">
+                                            <button wire:click="crearRapido({{ $it->id }})" class="font-medium text-brand-600 underline">Crearlo en el {{ $esteNombre }}</button>
+                                            <button wire:click="abrirCrear({{ $it->id }})" class="font-medium underline">Revisar datos y crear</button>
+                                        </div>
+                                    @endif
+                                </div>
+                            @endif
                             @if($editable)
                                 <div class="mt-2 space-y-1">
                                     @foreach($it->candidatos ?? [] as $cand)
@@ -398,18 +428,31 @@
 
                     @unless($carga->es_ajuste)
                     <td class="text-center">
-                        @if($it->odoo_product_id || $it->crear)
-                            @if($it->stock_anterior !== null)
-                                <div class="text-xs text-slate-400">Hay {{ $cant($it->stock_anterior) }}{{ $stockEnOtro ? ' en el viejo' : '' }}</div>
-                            @endif
+                        @php
+                            // stock en cada Odoo: [nombre, existe (o se crea), había, ya sumado]
+                            $stocks = [[$esteNombre, $it->odoo_product_id || $it->crear, $it->stock_anterior, $it->stock_aplicado]];
+                            if ($dosOdoo) $stocks[] = [$otroNombre, $it->otro_product_id || $it->crear, $it->otro_stock_anterior, $it->otro_stock_aplicado];
+                            $ingresa = (float) $it->cantidad > 0;
+                        @endphp
+                        @if($it->odoo_product_id || $it->crear || ($dosOdoo && $it->otro_product_id))
                             <input type="text" inputmode="decimal" placeholder="—" value="{{ $it->cantidad !== null ? $cant($it->cantidad) : '' }}" @disabled(!$editable)
-                                   wire:change="cambiarCantidad({{ $it->id }}, $event.target.value)"
-                                   class="input mx-auto w-20 text-center {{ (float) $it->cantidad > 0 ? '!border-brand-500 bg-brand-50' : '' }}">
-                            @if((float) $it->cantidad > 0 && $it->stock_anterior !== null)
-                                <div class="mt-0.5 text-[11px] {{ $it->stock_aplicado ? 'font-semibold text-emerald-600' : 'text-brand-600' }}">
-                                    {{ $it->stock_aplicado ? 'Sumado' : 'Queda ' . $cant((float) $it->stock_anterior + (float) $it->cantidad) }}
-                                </div>
-                            @endif
+                                   wire:change="cambiarCantidad({{ $it->id }}, $event.target.value)" title="Unidades que ingresan"
+                                   class="input mx-auto w-20 text-center {{ $ingresa ? '!border-brand-500 bg-brand-50' : '' }}">
+                            <div class="mt-1 space-y-0.5 whitespace-nowrap text-[11px]">
+                                @foreach($stocks as [$nom, $existe, $habia, $sumado])
+                                    <div class="{{ $existe ? 'text-slate-500' : 'text-amber-700' }}">
+                                        @if(count($stocks) > 1)<span class="font-medium">{{ ucfirst($corto($nom)) }}:</span>@endif
+                                        @if(!$existe)
+                                            no existe
+                                        @elseif($sumado)
+                                            <span class="font-semibold text-emerald-600">sumado</span>@if($habia !== null) ({{ $cant($habia) }} → {{ $cant((float) $habia + (float) $it->cantidad) }})@endif
+                                        @else
+                                            hay {{ $habia !== null ? $cant($habia) : ($it->crear && !($nom === $esteNombre ? $it->odoo_product_id : $it->otro_product_id) ? '0 (nuevo)' : '—') }}
+                                            @if($ingresa)<span class="text-brand-600">→ queda {{ $cant((float) $habia + (float) $it->cantidad) }}</span>@endif
+                                        @endif
+                                    </div>
+                                @endforeach
+                            </div>
                         @endif
                     </td>
                     @endunless
@@ -428,7 +471,10 @@
         <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="text-sm text-slate-600">
                 {{ $carga->solo_costo ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
-                @if($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock{{ $stockEnOtro ? ' en el Odoo viejo' : '' }}. @endif
+                @if($dosOdoo && ($conStock || $conStockOtro))
+                    Se suma stock a <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> en el {{ $esteNombre }}
+                    y a <span class="font-semibold text-slate-900">{{ number_format($conStockOtro, 0, ',', '.') }}</span> en el {{ $otroNombre }}.
+                @elseif($conStock) A <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> se les suma stock. @endif
                 @if($aCrear) Se crean <span class="font-semibold text-slate-900">{{ number_format($aCrear, 0, ',', '.') }}</span> productos nuevos{{ $otroNombre ? ' (en los dos Odoo)' : '' }}. @endif
             </div>
             <button wire:click="aplicar" @disabled($seleccionados + $aCrear === 0)
@@ -587,7 +633,11 @@
                     </div>
                 @endif
                 <p class="text-xs text-slate-500">
-                    Se crea al tocar "Actualizar en Odoo"{{ $otroNombre ? ', en este Odoo y en el ' . $otroNombre . ' (si ahí ya existe con el mismo código o nombre, solo se vincula)' : '' }}.
+                    @if($dosOdoo && $creando->otro_product_id && !$creando->odoo_product_id)
+                        Se crea en el {{ $esteNombre }} al tocar "Actualizar en Odoo", con los datos del {{ $otroNombre }}, donde ya existe como «{{ $creando->otro_nombre }}» (también copia su código de barras y referencia).
+                    @else
+                        Se crea al tocar "Actualizar en Odoo"{{ $otroNombre ? ', en el ' . $esteNombre . ' y en el ' . $otroNombre . ' (si ahí ya existe con el mismo código o nombre, solo se vincula)' : '' }}.
+                    @endif
                     @if($creando->barcode) Lleva el código de barras {{ $creando->barcode }}. @endif
                 </p>
                 <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">

@@ -36,20 +36,14 @@ class Procesador
         return $this->otro;
     }
 
-    /** Factura por foto cargada en el Odoo nuevo: el stock se suma en el viejo, no acá. */
-    public function stockEnOtro(Carga $carga): bool
-    {
-        return $carga->es_factura && !Instancia::esViejo() && $this->otro() !== null;
-    }
-
-    /** Factura por foto: cada renglón se busca también en el otro Odoo (costo en los dos, stock en el viejo). */
+    /** Factura por foto: cada renglón se busca también en el otro Odoo (costo y stock en los dos). */
     public function vincularOtro(Carga $carga, ?array $soloItemIds = null): void
     {
         if (!$carga->es_factura || !$this->otro()) return;
         $q = $carga->items()->where('otro_aplicado', false);
         if ($soloItemIds) $q->whereIn('id', $soloItemIds);
         try {
-            $this->otro()->vincular($carga, $q->get(), $this->stockEnOtro($carga));
+            $this->otro()->vincular($carga, $q->get());
         } catch (\Throwable $e) {
             report($e);   // sin conexión con el otro Odoo: la carga sigue igual en este
         }
@@ -539,9 +533,12 @@ class Procesador
             in_array($guardarCodigo, ['proveedor', 'referencia'], true) => $guardarCodigo,
             default                   => $item->guardar_codigo ?? $porDefecto,
         };
+        // solo existe en el otro Odoo: se crea acá con su nombre y su precio de venta
+        $delOtro = $nuevo && $item->otro_product_id ? $this->otro()?->producto((int) $item->otro_product_id) : null;
+        if ($delOtro && $venta === null && (float) $delOtro->precio > 0) $venta = (float) $delOtro->precio;
         $item->update([
             'crear'          => true,
-            'crear_nombre'   => mb_substr(trim((string) ($nombre ?: $item->crear_nombre ?: $item->odoo_nombre ?: $item->nombre)) ?: 'Producto sin nombre', 0, 250),
+            'crear_nombre'   => mb_substr(trim((string) ($nombre ?: $item->crear_nombre ?: $item->odoo_nombre ?: $delOtro?->nombre ?: $item->nombre)) ?: 'Producto sin nombre', 0, 250),
             'crear_categ_id' => $nuevo ? $categId : null,
             'match'          => $nuevo ? 'crear' : $item->match,
             'seleccionado'   => true,
@@ -563,9 +560,13 @@ class Procesador
             : []));
     }
 
-    /** Categoría probable para un producto nuevo: la del primer parecido, o la más común en esta carga. */
+    /** Categoría probable para un producto nuevo: la que tiene en el otro Odoo, la del primer parecido, o la más común en esta carga. */
     public function categoriaSugerida(CargaItem $item): ?int
     {
+        if ($item->otro_product_id && ($otro = $this->otro())) {
+            $c = $otro->categoriaPropia($otro->producto((int) $item->otro_product_id)?->categ_id);
+            if ($c) return $c;
+        }
         $cand = $item->candidatos[0]['id'] ?? null;
         if ($cand && ($c = OdooProducto::where('id', $cand)->value('categ_id'))) return (int) $c;
         $c = $item->carga->items()->whereNotNull('categoria_id')->selectRaw('categoria_id, COUNT(*) as n')
@@ -579,7 +580,7 @@ class Procesador
         $item->update([
             'odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ignorado', 'seleccionado' => false,
             'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null, 'stock_anterior' => null,
-            'crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null, 'otro_product_id' => null, 'otro_nombre' => null,
+            'crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null, 'otro_product_id' => null, 'otro_nombre' => null, 'otro_stock_anterior' => null,
         ]);
     }
 
@@ -732,19 +733,18 @@ class Procesador
         // códigos elegidos al asociar a mano (solo de los que se actualizaron bien)
         $erroresCodigo = $this->guardarCodigos($carga, $items->filter(fn ($it) => $it->guardar_codigo && !isset($errores[$it->id])));
 
-        // factura: el costo también en el otro Odoo; el stock, en el viejo (si la carga es del nuevo, se suma allá)
-        $enOtro = $this->stockEnOtro($carga);
+        // factura: el costo y el stock también en el otro Odoo
         $avisosOtro = [];
         if ($carga->es_factura && $this->otro()) {
             try {
-                $avisosOtro = $this->otro()->aplicar($items->reject(fn ($it) => isset($errores[$it->id]))->values(), $enOtro);
+                $avisosOtro = $this->otro()->aplicar($items->reject(fn ($it) => isset($errores[$it->id]))->values());
             } catch (\Throwable $e) {
                 foreach ($items as $it) $avisosOtro[$it->id] = $this->otro()->nombre() . ': ' . $e->getMessage();
             }
         }
 
         // stock que ingresa: se suma solo a los que se actualizaron bien
-        $conStock = $items->filter(fn ($it) => !$enOtro && !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
+        $conStock = $items->filter(fn ($it) => !isset($errores[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado)->keyBy('id');
         $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
             $conStock->groupBy('odoo_product_id')->map(fn ($g) => (float) $g->sum('cantidad'))->all()
         );
@@ -850,16 +850,15 @@ class Procesador
         $campos = $items->mapWithKeys(fn ($it) => [$it->id => $this->camposOdoo($carga, $it->costo_anterior, $it->precio_anterior)])->all();
         $errores = $this->escribir($items, $campos);
 
-        $enOtro = $this->stockEnOtro($carga);
         if ($carga->es_factura && $this->otro()) {
             try {
-                $errores += array_map(fn ($e) => $this->otro()->nombre() . ': ' . $e, $this->otro()->deshacer($carga, $enOtro));
+                $errores += array_map(fn ($e) => $this->otro()->nombre() . ': ' . $e, $this->otro()->deshacer($carga));
             } catch (\Throwable $e) {
                 $errores[0] = $this->otro()->nombre() . ': ' . $e->getMessage();
             }
         }
 
-        $conStock = $enOtro ? collect() : $carga->items()->where('stock_aplicado', true)->get();
+        $conStock = $carga->items()->where('stock_aplicado', true)->whereNotNull('odoo_product_id')->get();
         $erroresStock = $conStock->isEmpty() ? [] : $this->odoo->sumarStock(
             $conStock->groupBy('odoo_product_id')->map(fn ($g) => -(float) $g->sum('cantidad'))->all()
         );

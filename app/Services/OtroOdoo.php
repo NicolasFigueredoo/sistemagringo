@@ -15,8 +15,8 @@ use Illuminate\Support\Collection;
  * El "otro" Odoo de una carga: el viejo si se está trabajando en el nuevo, y al revés.
  * Usa la base local del otro (catálogo, categorías, proveedores) y su propia conexión a Odoo.
  *
- * Facturas por foto: cada renglón se busca también acá, para actualizar el costo en los dos
- * y sumar el stock en el viejo. Productos nuevos: se crean en los dos.
+ * Facturas por foto: cada renglón se busca también acá, para actualizar el costo y sumar el stock en los dos.
+ * Si falta en uno de los dos, se puede crear con los datos del otro.
  */
 class OtroOdoo
 {
@@ -101,67 +101,75 @@ class OtroOdoo
         return null;
     }
 
-    /** Busca en el otro Odoo cada renglón de la factura y trae su costo (y stock, si se suma ahí). */
-    public function vincular(Carga $carga, Collection $items, bool $conStock): void
+    /** Busca en el otro Odoo cada renglón de la factura y trae su costo y stock. */
+    public function vincular(Carga $carga, Collection $items): void
     {
         $propios = OdooProducto::whereIn('id', $items->pluck('odoo_product_id')->filter()->unique())->get()->keyBy('id');
         foreach ($items as $it) {
             if ($it->otro_aplicado) continue;
             $r = $this->buscar($it, $carga->proveedor, $propios->get($it->odoo_product_id));
-            $it->update(['otro_product_id' => $r['id'] ?? null, 'otro_nombre' => $r['nombre'] ?? null, 'otro_costo_anterior' => null]);
+            $it->update(['otro_product_id' => $r['id'] ?? null, 'otro_nombre' => $r['nombre'] ?? null, 'otro_costo_anterior' => null, 'otro_stock_anterior' => null]);
         }
-        $this->refrescar($items, $conStock);
+        $this->refrescar($items);
     }
 
-    /** Costo (y stock) actual en el otro Odoo, para comparar y para deshacer. */
-    public function refrescar(Collection $items, bool $conStock): void
+    /** Costo y stock actuales en el otro Odoo, para mostrarlos, comparar y deshacer. */
+    public function refrescar(Collection $items): void
     {
         $con = $items->filter(fn ($it) => $it->otro_product_id);
         foreach ($con->chunk(2000) as $chunk) {
             $actual = collect($this->cliente()->read('product.product', $chunk->pluck('otro_product_id')->unique()->values()->all(), ['standard_price', 'qty_available']))->keyBy('id');
             foreach ($chunk as $it) {
                 if (!$a = $actual->get($it->otro_product_id)) continue;
-                $datos = ['otro_costo_anterior' => $a['standard_price']];
-                if ($conStock) $datos['stock_anterior'] = $a['qty_available'] ?? null;
-                $it->update($datos);
+                $it->update(['otro_costo_anterior' => $a['standard_price'], 'otro_stock_anterior' => $a['qty_available'] ?? null]);
             }
-        }
-        // si el stock va al otro Odoo y el producto no está ahí, no hay stock para mostrar
-        if ($conStock) {
-            $items->filter(fn ($it) => !$it->otro_product_id && $it->stock_anterior !== null)->each->update(['stock_anterior' => null]);
         }
     }
 
+    /** El producto del otro Odoo en su base local (nombre, códigos, venta, categoría), para crearlo igual en este. */
+    public function producto(?int $id): ?OdooProducto
+    {
+        return $id ? $this->productos()->find($id) : null;
+    }
+
+    /** Categoría de este Odoo con el mismo nombre que la del producto en el otro. */
+    public function categoriaPropia(?int $categIdOtro): ?int
+    {
+        $nombre = $categIdOtro ? Categoria::on($this->conexion)->where('id', $categIdOtro)->value('nombre') : null;
+        if (!$nombre) return null;
+        $id = Categoria::where('nombre', $nombre)->value('id');
+        return $id ? (int) $id : null;
+    }
+
     /**
-     * Escribe el costo en el otro Odoo y, si corresponde, suma el stock ahí.
-     * Los renglones quedan marcados (otro_aplicado, stock_aplicado). Devuelve [item_id => aviso].
+     * Escribe el costo en el otro Odoo y suma ahí el stock que ingresa.
+     * Los renglones quedan marcados (otro_aplicado, otro_stock_aplicado). Devuelve [item_id => aviso].
      */
-    public function aplicar(Collection $items, bool $conStock): array
+    public function aplicar(Collection $items): array
     {
         $avisos = [];
-        $pend = $items->filter(fn ($it) => $it->otro_product_id && !$it->otro_aplicado)->values();
-        if ($conStock) {
-            foreach ($items as $it) {
-                if (!$it->otro_product_id && (float) $it->cantidad > 0 && !$it->stock_aplicado) {
-                    $avisos[$it->id] = "No está en el {$this->nombre()}: no se sumó el stock";
-                }
+        foreach ($items as $it) {
+            if (!$it->otro_product_id && (float) $it->cantidad > 0) {
+                $avisos[$it->id] = "No existe en el {$this->nombre()}: ahí no se actualizó";
             }
         }
+        $pend = $items->filter(fn ($it) => $it->otro_product_id && (!$it->otro_aplicado || ((float) $it->cantidad > 0 && !$it->otro_stock_aplicado)))->values();
         if ($pend->isEmpty()) return $avisos;
 
         try {
-            $this->refrescar($pend, $conStock);
+            $this->refrescar($pend);
         } catch (\Throwable $e) {
             foreach ($pend as $it) $avisos[$it->id] = "{$this->nombre()}: " . $e->getMessage();
             return $avisos;
         }
 
-        $escribir = $pend->reject(fn ($it) => $it->otro_costo_anterior !== null && abs((float) $it->otro_costo_anterior - (float) $it->costo_nuevo) < 0.005);
+        $escribir = $pend->reject(fn ($it) => $it->otro_aplicado
+            || ($it->otro_costo_anterior !== null && abs((float) $it->otro_costo_anterior - (float) $it->costo_nuevo) < 0.005));
         $fallas = $this->cliente()->writeMany('product.product', $escribir->mapWithKeys(fn ($it) => [
             $it->id => [[(int) $it->otro_product_id], ['standard_price' => (float) $it->costo_nuevo]],
         ])->all());
 
-        $conCant = $pend->filter(fn ($it) => $conStock && !isset($fallas[$it->id]) && (float) $it->cantidad > 0 && !$it->stock_aplicado);
+        $conCant = $pend->filter(fn ($it) => !isset($fallas[$it->id]) && (float) $it->cantidad > 0 && !$it->otro_stock_aplicado);
         $erroresStock = $conCant->isEmpty() ? [] : $this->cliente()->sumarStock(
             $conCant->groupBy('otro_product_id')->map(fn ($g) => (float) $g->sum('cantidad'))->all()
         );
@@ -173,8 +181,8 @@ class OtroOdoo
             }
             $errStock = $conCant->contains('id', $it->id) ? ($erroresStock[$it->otro_product_id] ?? null) : null;
             $it->update([
-                'otro_aplicado'  => true,
-                'stock_aplicado' => $it->stock_aplicado || ($conCant->contains('id', $it->id) && !$errStock),
+                'otro_aplicado'       => true,
+                'otro_stock_aplicado' => $it->otro_stock_aplicado || ($conCant->contains('id', $it->id) && !$errStock),
             ]);
             $this->productos()->where('id', $it->otro_product_id)->update(['costo' => (float) $it->costo_nuevo]);
             if ($errStock) $avisos[$it->id] = "{$this->nombre()}: $errStock";
@@ -182,8 +190,8 @@ class OtroOdoo
         return $avisos;
     }
 
-    /** Vuelve el costo anterior en el otro Odoo y, si el stock se sumó ahí, lo resta. Devuelve [item_id => error]. */
-    public function deshacer(Carga $carga, bool $conStock): array
+    /** Vuelve el costo anterior en el otro Odoo y resta el stock que se sumó ahí. Devuelve [item_id => error]. */
+    public function deshacer(Carga $carga): array
     {
         $errores = [];
         $items = $carga->items()->where('otro_aplicado', true)->whereNotNull('otro_costo_anterior')->get();
@@ -196,15 +204,13 @@ class OtroOdoo
             $this->productos()->where('id', $it->otro_product_id)->update(['costo' => (float) $it->otro_costo_anterior]);
         }
 
-        if ($conStock) {
-            $conCant = $carga->items()->where('stock_aplicado', true)->whereNotNull('otro_product_id')->get();
-            $erroresStock = $conCant->isEmpty() ? [] : $this->cliente()->sumarStock(
-                $conCant->groupBy('otro_product_id')->map(fn ($g) => -(float) $g->sum('cantidad'))->all()
-            );
-            foreach ($conCant as $it) {
-                if (isset($erroresStock[$it->otro_product_id])) { $errores[$it->id] = $erroresStock[$it->otro_product_id]; continue; }
-                $it->update(['stock_aplicado' => false]);
-            }
+        $conCant = $carga->items()->where('otro_stock_aplicado', true)->whereNotNull('otro_product_id')->get();
+        $erroresStock = $conCant->isEmpty() ? [] : $this->cliente()->sumarStock(
+            $conCant->groupBy('otro_product_id')->map(fn ($g) => -(float) $g->sum('cantidad'))->all()
+        );
+        foreach ($conCant as $it) {
+            if (isset($erroresStock[$it->otro_product_id])) { $errores[$it->id] = $erroresStock[$it->otro_product_id]; continue; }
+            $it->update(['otro_stock_aplicado' => false]);
         }
         return $errores;
     }

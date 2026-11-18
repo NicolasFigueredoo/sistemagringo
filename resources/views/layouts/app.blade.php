@@ -18,7 +18,7 @@
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
             ['reajustar', 'Reajustar', 'zap', ['reajustar']],
-            ['viejo.subir.factura', 'Odoo nuevo', 'camera', []],
+            ['viejo.subir.factura', \App\Support\Instancia::nombre(true), 'camera', []],
         ];
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
@@ -26,7 +26,7 @@
             <a href="{{ route($viejo ? 'viejo.subir.factura' : 'subir') }}" class="flex items-center gap-2.5">
                 <span class="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-xs font-bold tracking-tight text-white">TG</span>
                 <span class="hidden text-sm font-semibold text-slate-900 sm:block">Tío Gringo <span class="font-normal text-slate-400">/ Precios</span></span>
-                @if($viejo)<span class="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-600/20">ODOO NUEVO</span>@endif
+                @if($viejo)<span class="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-600/20">{{ mb_strtoupper(\App\Support\Instancia::nombre(true)) }}</span>@endif
             </a>
 
             <nav class="flex flex-1 items-center gap-1 overflow-x-auto">

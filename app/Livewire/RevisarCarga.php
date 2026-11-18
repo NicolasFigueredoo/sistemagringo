@@ -29,7 +29,7 @@ class RevisarCarga extends Component
     private const PENDIENTES = ['nombre', 'parecido', 'ninguno'];
 
     public Carga $carga;
-    public string $filtro = 'todos';     // todos (sin los grises) | verde | amarillo | naranja | gris | rojo
+    public string $filtro = 'todos';     // todos (sin los grises) | verde | amarillo | naranja | crear | falta | gris | rojo
     public $categoriaFiltro = '';         // id de categoría para filtrar la tabla
 
     // bloque "Por categoría": [categoria_id => valor]
@@ -219,7 +219,7 @@ class RevisarCarga extends Component
     public function quitar(int $id): void
     {
         if (!$this->editable()) return;
-        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null,
+        $this->item($id)->update(['odoo_product_id' => null, 'odoo_nombre' => null, 'match' => 'ninguno', 'seleccionado' => false, 'guardar_codigo' => null, 'costo_anterior' => null, 'precio_anterior' => null, 'stock_anterior' => null,
             'crear' => false, 'crear_nombre' => null, 'crear_categ_id' => null]);
         $this->proc()->vincularOtro($this->carga, [$id]);
     }
@@ -231,10 +231,16 @@ class RevisarCarga extends Component
         $it = $this->item($id);
         $this->buscandoItem = null;
         $this->creandoItem = $id;
-        $this->crearNombre = (string) ($it->crear_nombre ?: $it->nombre);
+        // si ya existe en el otro Odoo, se propone crearlo igual: mismo nombre, categoría y venta
+        $delOtro = !$it->crear && $it->otro_product_id ? $this->proc()->otro()?->producto((int) $it->otro_product_id) : null;
+        $this->crearNombre = (string) ($it->crear_nombre ?: $delOtro?->nombre ?: $it->nombre);
         $this->crearCategoria = (string) ($it->crear ? $it->crear_categ_id : $this->proc()->categoriaSugerida($it));
         $this->guardarCodigo = $it->guardar_codigo ?? ($it->codigo ? ($this->carga->proveedor?->odoo_partner_id ? 'proveedor' : 'referencia') : '');
-        $this->crearVenta = $it->crear ? number_format((float) $it->precio_nuevo, 2, ',', '.') : $this->ventaSugerida($it);
+        $this->crearVenta = match (true) {
+            $it->crear                    => number_format((float) $it->precio_nuevo, 2, ',', '.'),
+            (float) $delOtro?->precio > 0 => number_format((float) $delOtro->precio, 2, ',', '.'),
+            default                       => $this->ventaSugerida($it),
+        };
     }
 
     /** Al cambiar la categoría, la venta se recalcula con su ganancia (o la del proveedor). */
@@ -297,6 +303,29 @@ class RevisarCarga extends Component
         $this->resetPage();
     }
 
+    /** Factura: crea en el otro Odoo los que solo están en este (con los datos de este). */
+    public function crearEnOtro(): void
+    {
+        if (!$this->editable()) return;
+        $n = 0;
+        foreach ($this->faltanEnOtro()->get() as $it) { $this->proc()->marcarCrear($it); $n++; }
+        $this->mensaje = "Se van a crear $n productos en el " . $this->proc()->otro()?->nombre() . ' al tocar "Actualizar en Odoo".';
+        $this->filtro = 'crear';
+        $this->resetPage();
+    }
+
+    /** Factura: crea en este Odoo los que solo están en el otro (con su nombre, categoría, venta y códigos). */
+    public function crearEnEste(): void
+    {
+        if (!$this->editable()) return;
+        $proc = $this->proc();
+        $n = 0;
+        foreach ($this->faltanEnEste()->get() as $it) { $proc->marcarCrear($it, null, $proc->categoriaSugerida($it)); $n++; }
+        $this->mensaje = "Se van a crear $n productos en el " . Instancia::nombreEste() . ' al tocar "Actualizar en Odoo", con los datos del ' . $proc->otro()?->nombre() . '.';
+        $this->filtro = 'crear';
+        $this->resetPage();
+    }
+
     public function cerrarCrear(): void
     {
         $this->creandoItem = null;
@@ -311,6 +340,14 @@ class RevisarCarga extends Component
         $hay = $this->carga->es_factura && $this->proc()->otro();
         return $this->carga->items()->whereNotNull('odoo_product_id')->whereNull('otro_product_id')
             ->where('crear', false)->where('seleccionado', true)->when(!$hay, fn ($q) => $q->whereRaw('1 = 0'));
+    }
+
+    /** Factura: renglones que están en el otro Odoo pero no en este. */
+    private function faltanEnEste()
+    {
+        $hay = $this->carga->es_factura && $this->proc()->otro();
+        return $this->carga->items()->whereNull('odoo_product_id')->whereNotNull('otro_product_id')
+            ->where('crear', false)->where('match', '!=', 'ignorado')->when(!$hay, fn ($q) => $q->whereRaw('1 = 0'));
     }
 
     public function abrirBuscador(int $id): void
@@ -375,10 +412,16 @@ class RevisarCarga extends Component
             'amarillo' => $q->where('match', 'nombre'),
             'naranja'  => $q->where('match', 'parecido'),
             'crear'    => $q->where('crear', true),
-            'gris'     => $q->whereIn('match', ['ninguno', 'ignorado']),
+            // factura: falta en este Odoo o en el otro
+            'falta'    => $q->where('match', '!=', 'ignorado')->where(fn ($w) => $w
+                            ->where(fn ($x) => $x->whereNotNull('odoo_product_id')->whereNull('otro_product_id'))
+                            ->orWhere(fn ($x) => $x->whereNull('odoo_product_id')->whereNotNull('otro_product_id'))),
+            // sin coincidencia en ninguno de los dos
+            'gris'     => $q->whereIn('match', ['ninguno', 'ignorado'])->whereNull('otro_product_id'),
             'rojo'     => $q->whereNotNull('costo_anterior')->where('costo_anterior', '>', 0)
                             ->whereRaw('ABS(costo_nuevo / costo_anterior - 1) > 0.30'),
-            default    => $q->whereNotIn('match', ['ninguno', 'ignorado']),   // los grises son productos que no vende
+            // los grises son productos que no vende (salvo que estén en el otro Odoo)
+            default    => $q->where(fn ($w) => $w->whereNotIn('match', ['ninguno', 'ignorado'])->orWhereNotNull('otro_product_id')),
         };
     }
 
@@ -405,15 +448,8 @@ class RevisarCarga extends Component
     public function render()
     {
         $base = $this->carga->items();
-        $conteo = [
-            'todos'    => (clone $base)->whereNotIn('match', ['ninguno', 'ignorado'])->count(),
-            'verde'    => (clone $base)->whereIn('match', self::VERDES)->count(),
-            'amarillo' => (clone $base)->where('match', 'nombre')->count(),
-            'naranja'  => (clone $base)->where('match', 'parecido')->count(),
-            'crear'    => (clone $base)->where('crear', true)->count(),
-            'gris'     => (clone $base)->whereIn('match', ['ninguno', 'ignorado'])->count(),
-            'rojo'     => $this->filtrarCon('rojo')->count(),
-        ];
+        $conteo = collect(['todos', 'verde', 'amarillo', 'naranja', 'crear', 'gris', 'rojo'])
+            ->mapWithKeys(fn ($f) => [$f => $this->filtrarCon($f)->count()])->all();
 
         // categorías presentes en esta carga (solo productos encontrados)
         $cats = $this->carga->items()->whereNotNull('categoria_id')
@@ -429,13 +465,17 @@ class RevisarCarga extends Component
 
         // facturas: también se actualiza el otro Odoo; en listas, el otro solo se usa al crear productos
         $otro = $this->proc()->otro();
+        $dosOdoo = $this->carga->es_factura && $otro;
+        if ($dosOdoo) $conteo['falta'] = $this->filtrarCon('falta')->count();
+        $conCant = fn () => (clone $base)->where('seleccionado', true)->where('cantidad', '>', 0);
 
         return view('livewire.revisar-carga', [
             'categorias'   => $categorias,
             'items'        => $this->filtrar($this->carga->items())->orderBy('fila')->paginate(50),
             'conteo'       => $conteo,
             'seleccionados'=> (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->count(),
-            'conStock'     => (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->where('cantidad', '>', 0)->count(),
+            'conStock'     => $conCant()->where(fn ($w) => $w->whereNotNull('odoo_product_id')->orWhere('crear', true))->count(),
+            'conStockOtro' => $dosOdoo ? $conCant()->where(fn ($w) => $w->whereNotNull('otro_product_id')->orWhere('crear', true))->count() : 0,
             'resultados'   => $this->buscandoItem ? $this->resultadosBusqueda() : [],
             'buscando'     => $this->buscandoItem ? $this->item($this->buscandoItem) : null,
             'pendientes'   => $this->editable() ? (clone $base)->whereIn('match', self::PENDIENTES)->whereNull('odoo_product_id')->count() : 0,
@@ -445,8 +485,10 @@ class RevisarCarga extends Component
             'editable'     => $this->editable(),
             'aCrear'       => (clone $base)->where('crear', true)->where('seleccionado', true)->count(),
             'faltanOtro'   => $this->editable() ? $this->faltanEnOtro()->count() : 0,
+            'faltanEste'   => $this->editable() ? $this->faltanEnEste()->count() : 0,
             'otroNombre'   => $otro?->nombre(),
-            'stockEnOtro'  => $this->proc()->stockEnOtro($this->carga),
+            'esteNombre'   => Instancia::nombreEste(),
+            'dosOdoo'      => (bool) $dosOdoo,
             'creando'      => $this->creandoItem ? $this->item($this->creandoItem) : null,
             'todasCategorias' => $this->creandoItem ? Categoria::orderBy('nombre')->get(['id', 'nombre']) : collect(),
         ]);

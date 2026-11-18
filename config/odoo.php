@@ -5,6 +5,8 @@ return [
     'db'      => env('ODOO_DB', 'ferreteriatiogringo'),
     'user'    => env('ODOO_USER'),
     'api_key' => env('ODOO_API_KEY'),
+    // nombre que se muestra en pantalla
+    'nombre'  => env('ODOO_NOMBRE', 'Odoo viejo'),
 
     // ubicación donde se suma el stock que ingresa (vacío = "Existencias" del primer depósito)
     'stock_location_id' => env('ODOO_STOCK_LOCATION_ID'),
@@ -16,6 +18,7 @@ return [
         'user'    => env('ODOO_VIEJO_USER'),
         'api_key' => env('ODOO_VIEJO_API_KEY'),
         'stock_location_id' => env('ODOO_VIEJO_STOCK_LOCATION_ID'),
+        'nombre'  => env('ODOO_VIEJO_NOMBRE', 'Odoo nuevo'),
     ],
 
     // ruta al ejecutable pdftotext (poppler)

@@ -63,9 +63,24 @@ class Instancia
         return self::esViejo() ? (self::$original['db'] ?? config('database.principal') ?? 'sqlite') : 'sqlite_viejo';
     }
 
+    /**
+     * Nombre que ve el usuario. En el menú las pantallas /viejo figuran como "Odoo nuevo" y las principales como "Odoo viejo";
+     * se puede cambiar con ODOO_NOMBRE y ODOO_VIEJO_NOMBRE.
+     */
+    public static function nombre(bool $viejo): string
+    {
+        $o = self::base();
+        return $viejo ? ($o['viejo']['nombre'] ?? 'Odoo nuevo') : ($o['nombre'] ?? 'Odoo viejo');
+    }
+
+    public static function nombreEste(): string
+    {
+        return self::nombre(self::esViejo());
+    }
+
     public static function nombreOtro(): string
     {
-        return self::esViejo() ? 'Odoo nuevo' : 'Odoo viejo';
+        return self::nombre(!self::esViejo());
     }
 
     /** route() que se queda en la misma instancia: en el Odoo viejo usa las rutas "viejo.*". */
