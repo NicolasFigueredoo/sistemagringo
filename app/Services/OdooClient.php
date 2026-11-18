@@ -21,6 +21,12 @@ class OdooClient
         private string $apiKey,
         private $stockLocationId = null,
     ) {
+        $url = trim($url, " \t\n\r\0\x0B\"'");
+        if ($url === '') {
+            throw new RuntimeException("Falta la dirección del Odoo de la base \"$db\": revisá ODOO_URL / ODOO_VIEJO_URL en el .env.");
+        }
+        // "ferreteria.odoo.com" sin https:// da "URI must include a scheme and host"
+        if (!preg_match('#^https?://#i', $url)) $url = 'https://' . $url;
         $this->url = rtrim($url, '/');
     }
 

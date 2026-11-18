@@ -1,8 +1,8 @@
 <?php
 
 return [
-    'url'     => env('ODOO_URL', 'https://ferreteriatiogringo.odoo.com'),
-    'db'      => env('ODOO_DB', 'ferreteriatiogringo'),
+    'url'     => (env('ODOO_URL') ?: 'https://ferreteriatiogringo.odoo.com'),
+    'db'      => (env('ODOO_DB') ?: 'ferreteriatiogringo'),
     'user'    => env('ODOO_USER'),
     'api_key' => env('ODOO_API_KEY'),
     // nombre que se muestra en pantalla
@@ -13,8 +13,8 @@ return [
 
     // Odoo viejo: solo para cargar facturas por foto (pantallas /viejo)
     'viejo' => [
-        'url'     => env('ODOO_VIEJO_URL', 'https://ferreteria-tio-gringo.odoo.com'),
-        'db'      => env('ODOO_VIEJO_DB', 'ferreteria-tio-gringo'),
+        'url'     => (env('ODOO_VIEJO_URL') ?: 'https://ferreteria-tio-gringo.odoo.com'),
+        'db'      => (env('ODOO_VIEJO_DB') ?: 'ferreteria-tio-gringo'),
         'user'    => env('ODOO_VIEJO_USER'),
         'api_key' => env('ODOO_VIEJO_API_KEY'),
         'stock_location_id' => env('ODOO_VIEJO_STOCK_LOCATION_ID'),

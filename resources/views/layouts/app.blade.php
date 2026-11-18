@@ -8,17 +8,21 @@
 <body class="min-h-full">
     @php
         $viejo = \App\Support\Instancia::esViejo();
+        // "Odoo nuevo" -> "Cargar factura nuevo"
+        $factura = fn (bool $v) => 'Cargar factura ' . mb_strtolower(trim(preg_replace('/^odoo\s*/i', '', \App\Support\Instancia::nombre($v))));
         $nav = $viejo ? [
-            ['viejo.subir.factura', 'Cargar factura', 'camera', ['viejo.subir.factura', 'viejo.revisar']],
+            ['viejo.subir.factura', $factura(true), 'camera', ['viejo.subir.factura', 'viejo.revisar']],
             ['viejo.historial', 'Historial', 'clock', ['viejo.historial']],
+            ['subir.factura', $factura(false), 'camera', []],
             ['subir', 'Volver', 'undo', []],
         ] : [
-            ['subir', 'Cargar lista', 'file', ['subir', 'subir.factura', 'revisar']],
+            ['subir', 'Cargar lista', 'file', ['subir', 'revisar']],
             ['costos', 'Costos', 'check', ['costos']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
             ['reajustar', 'Reajustar', 'zap', ['reajustar']],
-            ['viejo.subir.factura', \App\Support\Instancia::nombre(true), 'camera', []],
+            ['viejo.subir.factura', $factura(true), 'camera', []],
+            ['subir.factura', $factura(false), 'camera', ['subir.factura']],
         ];
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
