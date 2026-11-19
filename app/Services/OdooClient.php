@@ -87,7 +87,7 @@ class OdooClient
         if ($this->uid === null) {
             $uid = $this->rpc('common', 'login', [$this->db, $this->user, $this->apiKey]);
             if (!$uid) {
-                throw new RuntimeException('No se pudo entrar a Odoo: revisá usuario, base de datos y API key.');
+                throw new RuntimeException("No se pudo entrar a Odoo ({$this->url}, base \"{$this->db}\", usuario {$this->user}): revisá usuario, base de datos y API key.");
             }
             $this->uid = (int) $uid;
         }
