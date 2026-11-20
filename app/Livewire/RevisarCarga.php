@@ -437,7 +437,8 @@ class RevisarCarga extends Component
                     foreach ($tokens as $t) $n->where('nombre_norm', 'like', '%' . $t . '%');
                 });
             }
-            $w->orWhere('barcode', $txt)->orWhere('default_code', 'like', $txt . '%');
+            // el texto tal cual en el nombre: códigos escritos ahí, como "(P-324-234)" en Bahco
+            $w->orWhere('barcode', $txt)->orWhere('default_code', 'like', $txt . '%')->orWhere('nombre', 'like', '%' . $txt . '%');
             if ($k = Matcher::codigoClave($txt)) {
                 $w->orWhereIn('id', CodigoProveedor::where('codigo', $k)->select('product_id'));
             }

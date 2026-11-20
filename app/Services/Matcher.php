@@ -9,7 +9,9 @@ namespace App\Services;
  *   1. barcode   -> código de barras exacto                  (se aplica solo)
  *   2. mapeo     -> ya se asoció a mano antes                (se aplica solo)
  *   3. codigo    -> código del proveedor cargado en Odoo, o  (se aplica solo)
- *                   referencia interna (default_code) única
+ *                   referencia interna (default_code) única, o
+ *                   código escrito entre paréntesis en el nombre: "TORNILLO PERFORANTE (P-324-234)"
+ *                   (código suelto en el nombre, "ALICATE BAHCO 2101g-180d": como nombre, hay que tildarlo)
  *   4. nombre    -> nombre idéntico normalizado, único       (hay que tildarlo)
  *                   o código suelto que coincide (descripción, otras columnas, código corto)
  *   5. parecido  -> hasta 3 candidatos para elegir           (hay que elegir)
@@ -34,6 +36,10 @@ class Matcher
     private array $porCodigoProv = [];
     /** @var array<string,int[]> codigoClave(código de barras corto de Odoo, "1253") => ids */
     private array $porBarcodeCorto = [];
+    /** @var array<string,int[]> codigoClave(código entre paréntesis en el nombre de Odoo) => ids */
+    private array $porCodigoNombre = [];
+    /** @var array<string,int[]> codigoClave(palabra con forma de código en el nombre de Odoo) => ids */
+    private array $porCodigoSuelto = [];
     /** @var array<string,int[]> nombre_norm => ids */
     private array $porNombre = [];
     /** @var array<string,int[]> token => ids (índice invertido) */
@@ -62,6 +68,8 @@ class Matcher
                 if (strlen($b) < 8 && ($k = self::codigoClave($b))) $this->porBarcodeCorto[$k][] = $id;
             }
             if ($k = self::codigoClave($p['default_code'] ?? null)) $this->porCodigo[$k][] = $id;
+            foreach (self::codigosEnNombre($p['nombre']) as $k) $this->porCodigoNombre[$k][] = $id;
+            foreach (self::codigosSueltos($p['nombre']) as $k) $this->porCodigoSuelto[$k][] = $id;
             $this->porNombre[$norm][] = $id;
             foreach ($tokens as $t) $this->porToken[$t][] = $id;
         }
@@ -127,10 +135,40 @@ class Matcher
                 if ($id) return $this->resultado('codigo', $id);
             }
         }
+        // código escrito en el nombre, entre paréntesis (Bahco): en Odoo, en la lista o en los dos
+        $enNombre = self::codigosEnNombre($nombre);
+        foreach ($principales as $k) {
+            if (self::codigoFuerte($k) && ($id = self::unico($this->porCodigoNombre[$k] ?? []))) return $this->resultado('codigo', $id);
+        }
+        foreach ($enNombre as $k) {
+            $id = self::unico($this->porCodigoProv[$k] ?? []) ?? self::unico($this->porCodigo[$k] ?? []) ?? self::unico($this->porCodigoNombre[$k] ?? []);
+            if ($id) return $this->resultado('codigo', $id);
+        }
+
         foreach ($otros as $k) {
             if (!self::codigoFuerte($k)) continue;
             $id = self::unico($this->porCodigoProv[$k] ?? []) ?? self::unico($this->porCodigo[$k] ?? []);
             if ($id) return $this->resultado('nombre', $id);
+        }
+        // código suelto dentro del nombre de Odoo ("ALICATE BAHCO 2101g-180d"): puede ser casualidad, se confirma a mano
+        // si el código está en 2 a 5 productos (el blister "P-3140-100" y el suelto "3140-100"), se ofrecen para elegir
+        // un número solo ("8172") en un producto sin ninguna palabra en común puede ser casualidad: va al final de las opciones
+        [$porCodigoVarios, $dudosos] = [[], []];
+        $palabras = self::tokens($norm);
+        foreach (array_unique(array_merge($principales, $enNombre)) as $k) {
+            if (strlen($k) < 4) continue;
+            $ids = array_values(array_unique($this->porCodigoSuelto[$k] ?? []));
+            if (count($ids) > 5) continue;
+            foreach ($ids as $id) {
+                $seguro = !ctype_digit($k) || !$palabras || array_intersect($palabras, $this->productos[$id]['tokens']);
+                if ($seguro && count($ids) === 1) return $this->resultado('nombre', $id);
+                ${$seguro ? 'porCodigoVarios' : 'dudosos'}[$id] = ['id' => $id, 'nombre' => $this->productos[$id]['nombre'], 'score' => 1.0];
+            }
+        }
+        if ($porCodigoVarios || $dudosos) {
+            foreach ($norm === '' ? [] : $this->parecidos($norm, 3) as $c) $porCodigoVarios[$c['id']] ??= $c;
+            $porCodigoVarios += $dudosos;
+            return ['match' => 'parecido', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => array_slice(array_values($porCodigoVarios), 0, 5)];
         }
 
         if ($norm === '') {
@@ -232,6 +270,53 @@ class Matcher
         $c = preg_replace('/[^A-Z0-9]/', '', $c);
         if (ctype_digit($c)) $c = ltrim($c, '0');
         return $c === '' ? null : $c;
+    }
+
+    /**
+     * Códigos escritos entre paréntesis o corchetes en un nombre: "TORNILLO PERFORANTE (P-324-234)" -> ["P324234"].
+     * Solo lo que parece un código (con números, sin espacios de más); "(x10)", "(1/2)" o "(10 UNID)" no cuentan.
+     * @return string[] claves (codigoClave)
+     */
+    public static function codigosEnNombre(?string $nombre): array
+    {
+        if ($nombre === null || !preg_match_all('/[(\[]\s*([^()\[\]]{3,30}?)\s*[)\]]/u', $nombre, $m)) return [];
+        $out = [];
+        foreach ($m[1] as $c) {
+            if (!preg_match('/\d/', $c) || preg_match('/\s\S*\s/', $c) || self::esMedida($c)) continue;   // a lo sumo un espacio
+            $k = self::codigoClave($c);
+            if ($k && strlen($k) >= 4) $out[] = $k;
+        }
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * Palabras del nombre con forma de código: "ALICATE BAHCO plano 2101g-180d" -> ["2101G180D"].
+     * Con "P-" adelante (blister Bahco) también sin la P: "P-3140-100" -> ["P3140100", "3140100"].
+     * @return string[] claves (codigoClave)
+     */
+    public static function codigosSueltos(?string $nombre): array
+    {
+        $out = [];
+        foreach (preg_split('/[\s(),;*\[\]]+/u', (string) $nombre) as $w) {
+            $w = trim($w, '.-/');
+            if (!preg_match('/\d/', $w) || self::esMedida($w)) continue;
+            $k = self::codigoClave($w);
+            if (!$k || strlen($k) < 4) continue;
+            $out[] = $k;
+            if (preg_match('/^P(\d.{3,})$/', $k, $m)) $out[] = $m[1];
+        }
+        return array_values(array_unique($out));
+    }
+
+    /** "1/2", "3/4 H", "12mm", "x10", "450gs", "10 UNID", "1000v", "60,7cm": medidas y cantidades, no códigos. */
+    private static function esMedida(string $c): bool
+    {
+        $c = trim($c);
+        // un número solo ("8172") sí puede ser código; con unidad o "x" adelante es medida o cantidad
+        return (bool) preg_match('~^x\s*[\d.,]+$~i', $c)
+            || preg_match('~^[\d.,]+\s*("|\'\'|\'|´|#|mm|cm|mts?|m|kg|grs?|gs|g|lts?|l|u|un|unid|uds|pz|pzas?|v|vol|w|tn|h|dientes)\.?$~i', $c)
+            || preg_match('~^[\d.,]+$~', $c) && preg_match('~[.,]~', $c)
+            || preg_match('~^\d+(\s*\d+)?/\d+~', $c);
     }
 
     /** Partes de un código compuesto que por sí solas parecen un código: "ST00118-POXIPOL" -> ["ST00118"] */
