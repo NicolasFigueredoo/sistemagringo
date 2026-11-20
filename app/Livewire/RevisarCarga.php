@@ -463,8 +463,8 @@ class RevisarCarga extends Component
                 $this->catGuardar[$c->id] ??= true;
             });
 
-        // facturas: también se actualiza el otro Odoo; en listas, el otro solo se usa al crear productos
-        $otro = $this->proc()->otro();
+        // facturas: también se actualiza el otro Odoo; las listas van solo al Odoo viejo
+        $otro = $this->carga->es_factura ? $this->proc()->otro() : null;
         $dosOdoo = $this->carga->es_factura && $otro;
         if ($dosOdoo) $conteo['falta'] = $this->filtrarCon('falta')->count();
         $conCant = fn () => (clone $base)->where('seleccionado', true)->where('cantidad', '>', 0);

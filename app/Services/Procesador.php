@@ -518,7 +518,7 @@ class Procesador
     }
 
     /**
-     * Marca el renglón para crear el producto al tocar "Actualizar en Odoo" (en los dos Odoo).
+     * Marca el renglón para crear el producto al tocar "Actualizar en Odoo" (en facturas, en los dos Odoo).
      * Si ya está en este Odoo y falta en el otro, solo se crea en el otro.
      * @param string|null $guardarCodigo proveedor | referencia | '' (no guardar) | null (lo de siempre)
      */
@@ -718,7 +718,9 @@ class Procesador
         [$erroresCrear, $avisosCrear] = [[], []];
         $aCrear = $items->filter(fn ($it) => $it->crear);
         if ($aCrear->isNotEmpty()) {
-            [$erroresCrear, $avisosCrear] = (new CreadorProductos($this->odoo, $this->otro()))->crear($carga, $aCrear);
+            // listas: solo en el Odoo viejo; facturas: en los dos
+            $otro = $carga->es_factura ? $this->otro() : null;
+            [$erroresCrear, $avisosCrear] = (new CreadorProductos($this->odoo, $otro))->crear($carga, $aCrear);
             $items = $items->reject(fn ($it) => isset($erroresCrear[$it->id]))->values();
         }
 

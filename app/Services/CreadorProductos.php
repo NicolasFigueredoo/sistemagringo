@@ -10,7 +10,7 @@ use Illuminate\Support\Collection;
 
 /**
  * Crea en Odoo los productos de la carga que no existen, con el nombre, categoría, costo y venta de la revisión,
- * y el código del proveedor (pestaña Compra) o como referencia interna. Se crean en este Odoo y en el otro
+ * y el código del proveedor (pestaña Compra) o como referencia interna. En facturas se crean en este Odoo y en el otro
  * (si en el otro ya existe, solo se vincula). Si el producto ya existe en uno de los dos, el que falta se crea
  * con sus datos (código de barras, referencia, venta). Lo llama "Actualizar en Odoo", antes de escribir costos y stock.
  */
