@@ -223,6 +223,20 @@ class Procesador
         @set_time_limit(0);
         $filas = LectorLista::leer($ruta, $ext);
 
+        // Sysvent (Angel M. Beber): rubros, código dentro de la descripción, precios en pesos, dólares o euros
+        if (LectorSysvent::es($filas) && ($sv = LectorSysvent::columnas($filas))) {
+            if (($columnas['col_precio'] ?? null) !== null) $sv['col_precio'] = (int) $columnas['col_precio'];   // ej. Pr.Neto
+            $cot = ['USD' => (float) ($opciones['cotizacion_dolar'] ?? 0), 'EUR' => (float) ($opciones['cotizacion_euro'] ?? 0)];
+            $renglones = array_map(function ($r) use ($cot) {
+                $r['precio_origen'] = $r['precio'];
+                // sin cotización queda el precio de la lista y el renglón sin marcar, hasta cargarla en la revisión
+                if ($r['moneda'] !== 'ARS' && $cot[$r['moneda']] > 0 && $r['precio']) $r['precio'] = round($r['precio'] * $cot[$r['moneda']], 4);
+                return $r;
+            }, LectorSysvent::renglones($filas, $sv));
+            return $this->armarCarga($prov, $renglones, ['archivo' => $nombreArchivo, 'formato' => 'sysvent',
+                'marca' => LectorSysvent::marcaArchivo($nombreArchivo)] + $opciones);
+        }
+
         $celda = fn (array $f, $col) => ($col === null || $col === '') ? null : ($f[(int) $col] ?? null);
         $inicio = max(1, (int) $columnas['fila_inicio']) - 1;
         $renglones = [];
@@ -302,7 +316,11 @@ class Procesador
                 'agregar_iva'  => (bool) ($datosCarga['agregar_iva'] ?? false),
                 'sumar_iva'    => (bool) $datosCarga['sumar_iva'],
                 'redondeo'     => (int) $datosCarga['redondeo'],
+                'formato'      => $datosCarga['formato'] ?? null,
+                'cotizacion_dolar' => ($datosCarga['cotizacion_dolar'] ?? null) ?: null,
+                'cotizacion_euro'  => ($datosCarga['cotizacion_euro'] ?? null) ?: null,
             ]);
+            $sysvent = $carga->formato === 'sysvent';
 
             $items = [];
             foreach ($renglones as $r) {
@@ -311,7 +329,11 @@ class Procesador
                 if (!$precio || $precio <= 0) continue;            // títulos, subtotales, etc.
                 if (!$barcode && !$codigo && !$nombre) continue;
 
-                $m = $matcher->buscar($barcode, $codigo, $nombre, $r['extras']);
+                $m = $sysvent
+                    ? $matcher->buscarSysvent((string) $codigo, $r['descripcion'], $r['fabricante'], $r['rubro'], $datosCarga['marca'] ?? null)
+                    : $matcher->buscar($barcode, $codigo, $nombre, $r['extras']);
+                $moneda = $r['moneda'] ?? null;
+                $sinCotizacion = $moneda && $moneda !== 'ARS' && !(float) ($datosCarga[$moneda === 'USD' ? 'cotizacion_dolar' : 'cotizacion_euro'] ?? 0);
 
                 $items[] = [
                     'carga_id'        => $carga->id,
@@ -330,12 +352,16 @@ class Procesador
                     'odoo_nombre'     => $m['odoo_nombre'],
                     'margen'          => (float) $prov->margen,
                     'precio_nuevo'    => 0,
-                    'seleccionado'    => in_array($m['match'], ['barcode', 'mapeo', 'codigo'], true),
+                    'seleccionado'    => in_array($m['match'], ['barcode', 'mapeo', 'codigo'], true) && !$sinCotizacion,
+                    'rubro'           => isset($r['rubro']) ? mb_substr($r['rubro'], 0, 120) : null,
+                    'moneda'          => $moneda,
+                    'precio_origen'   => $r['precio_origen'] ?? null,
                     'created_at'      => now(),
                     'updated_at'      => now(),
                 ];
             }
 
+            if ($sysvent) $items = self::sinRepetidos($items);
             foreach (array_chunk($items, 500) as $chunk) {
                 CargaItem::insert($chunk);
             }
@@ -354,6 +380,43 @@ class Procesador
     }
 
     public const CAMBIO_SOSPECHOSO = 0.5;
+
+    /**
+     * Dos renglones de la lista que caen solos en el mismo producto ("P-3140-75" blister y "3140-75" suelto,
+     * o un repuesto con el código del producto): ninguno es seguro, se confirman a mano.
+     */
+    private static function sinRepetidos(array $items): array
+    {
+        $porProducto = [];
+        foreach ($items as $i => $it) {
+            if ($it['match'] === 'codigo') $porProducto[$it['odoo_product_id']][] = $i;
+        }
+        foreach ($porProducto as $indices) {
+            if (count($indices) < 2) continue;
+            foreach ($indices as $i) {
+                $items[$i]['match'] = 'nombre';
+                $items[$i]['seleccionado'] = false;
+            }
+        }
+        return $items;
+    }
+
+    /** Cotización del dólar / euro de una lista Sysvent: convierte de nuevo los precios en esa moneda y rehace las cuentas. */
+    public function cambiarCotizacion(Carga $carga, ?float $dolar, ?float $euro): int
+    {
+        $carga->update(['cotizacion_dolar' => $dolar ?: null, 'cotizacion_euro' => $euro ?: null]);
+        $ids = [];
+        DB::transaction(function () use ($carga, $dolar, $euro, &$ids) {
+            foreach ($carga->items()->whereIn('moneda', ['USD', 'EUR'])->whereNotNull('precio_origen')->get() as $it) {
+                $cot = $it->moneda === 'USD' ? $dolar : $euro;
+                if (!$cot) continue;
+                $it->update(['precio_lista' => round((float) $it->precio_origen * $cot, 4)]);
+                $ids[] = $it->id;
+            }
+        });
+        if ($ids) $this->aplicarReglas($carga, $ids);
+        return count($ids);
+    }
 
     /**
      * Arma una carga para revisar con los productos de la categoría (o de todas las que tienen ganancia, si $cat es null):
@@ -770,7 +833,8 @@ class Procesador
                 self::actualizarLocal($it->odoo_product_id, $campos[$it->id]);
 
                 // si lo confirmó una persona, recordarlo para la próxima
-                if (in_array($it->match, ['manual', 'nombre', 'creado'], true)) {
+                // Sysvent: también los encontrados por código, así la próxima lista sale por el código interno de Beber
+                if (in_array($it->match, ['manual', 'nombre', 'creado'], true) || ($carga->formato === 'sysvent' && $it->match === 'codigo')) {
                     foreach (Matcher::claves($it->barcode, $it->codigo, $it->nombre) as $clave) {
                         Mapeo::updateOrCreate(
                             ['proveedor_id' => $carga->proveedor_id, 'clave' => mb_substr($clave, 0, 250)],

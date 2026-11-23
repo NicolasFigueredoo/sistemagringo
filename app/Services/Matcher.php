@@ -40,6 +40,8 @@ class Matcher
     private array $porCodigoNombre = [];
     /** @var array<string,int[]> codigoClave(palabra con forma de código en el nombre de Odoo) => ids */
     private array $porCodigoSuelto = [];
+    /** @var array<string,int[]> código de Odoo sin la letra de variante del final ("MTG519AR" -> "MTG519") => ids */
+    private array $porCodigoBase = [];
     /** @var array<string,int[]> nombre_norm => ids */
     private array $porNombre = [];
     /** @var array<string,int[]> token => ids (índice invertido) */
@@ -68,10 +70,20 @@ class Matcher
                 if (strlen($b) < 8 && ($k = self::codigoClave($b))) $this->porBarcodeCorto[$k][] = $id;
             }
             if ($k = self::codigoClave($p['default_code'] ?? null)) $this->porCodigo[$k][] = $id;
+            // referencia con texto de más ("7800dm-15 ex s 15"): la primera palabra también es el código
+            $primera = preg_split('/\s+/', trim((string) ($p['default_code'] ?? '')))[0] ?? '';
+            if ($primera !== trim((string) ($p['default_code'] ?? '')) && preg_match('/\d/', $primera) && ($k1 = self::codigoClave($primera)) && strlen($k1) >= 4) {
+                $this->porCodigo[$k1][] = $id;
+            }
             foreach (self::codigosEnNombre($p['nombre']) as $k) $this->porCodigoNombre[$k][] = $id;
             foreach (self::codigosSueltos($p['nombre']) as $k) $this->porCodigoSuelto[$k][] = $id;
             $this->porNombre[$norm][] = $id;
             foreach ($tokens as $t) $this->porToken[$t][] = $id;
+        }
+        foreach ([$this->porCodigo, $this->porCodigoNombre, $this->porCodigoSuelto] as $indice) {
+            foreach ($indice as $k => $ids) {
+                if ($b = self::base((string) $k)) foreach ($ids as $id) $this->porCodigoBase[$b][] = $id;
+            }
         }
         foreach ($codigosProveedor as $c) {
             $c = (array) $c;
@@ -190,6 +202,175 @@ class Matcher
         return ['match' => 'ninguno', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => []];
     }
 
+    /**
+     * Renglón de una lista Sysvent (Angel M. Beber): el código de la 1ª columna es INTERNO del proveedor
+     * (solo sirve para recordar la asociación); el código del producto viene escrito en la descripción.
+     *
+     *   1. asociación guardada por código interno            -> mapeo   (seguro)
+     *   2. código de la descripción = referencia interna,
+     *      código del proveedor en Odoo o "(código)" en el nombre, único -> codigo (seguro)
+     *   3. código de la descripción suelto en el nombre de Odoo: seguro si comparte alguna palabra
+     *      o la marca del rubro; si no, hay que tildarlo
+     *   4. varios productos con el mismo código -> se ofrecen para elegir, primero los de la marca del rubro
+     *   5. el mismo código con otra letra de variante al final ("MTG-5-19" / "MTG-5-19AR") -> tildar o elegir
+     *   6. "PU 1/2", "SX 23" (serie + medida): producto de la marca que tiene todas esas palabras -> tildar
+     *   7. por nombre, como cualquier lista
+     *
+     * @param string|null $rubro "111-BAHCO", "026-DEWALT MAQUINAS": acota y ordena cuando hay varios
+     */
+    public function buscarSysvent(string $codigoInterno, ?string $descripcion, ?string $columnaCodigo = null, ?string $rubro = null, ?string $marcaLista = null): array
+    {
+        $nombre = CodigosDescripcion::limpiar((string) $descripcion);
+        $norm = self::normalizar($nombre);
+        $palabras = self::tokens($norm);
+        $marca = self::tokensMarca($rubro, $marcaLista);
+
+        // 1. asociación guardada: por código interno de Beber (no cambia aunque cambie la descripción)
+        foreach (self::claves(null, $codigoInterno, null) as $clave) {
+            if (($this->mapeos[$clave] ?? null) === self::IGNORAR) {
+                return ['match' => 'ignorado', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => []];
+            }
+            if (isset($this->mapeos[$clave]) && isset($this->productos[$this->mapeos[$clave]])) {
+                return $this->resultado('mapeo', $this->mapeos[$clave]);
+            }
+        }
+
+        $candidatos = CodigosDescripcion::candidatos($descripcion, $columnaCodigo);
+        // los códigos largos primero: "K8901Z1.3/8" decide antes que "K8901Z" (que está en todas las medidas)
+        usort($candidatos, fn ($a, $b) => [$b['fuerte'], strlen($b['clave'])] <=> [$a['fuerte'], strlen($a['clave'])]);
+
+        $varios = [];
+        $sueltoUnico = null;
+        foreach ($candidatos as $c) {
+            $k = $c['clave'];
+            // 2. referencia interna, código del proveedor en Odoo o "(código)" en el nombre
+            $ref = array_values(array_unique(array_merge($this->porCodigoProv[$k] ?? [], $this->porCodigo[$k] ?? [], $this->porCodigoNombre[$k] ?? [])));
+            if (count($ref) === 1 && !isset($varios[$ref[0]])) {
+                $comparte = $this->comparte($ref[0], $palabras, $marca);
+                // seguro solo si además comparte una palabra o la marca ("10-30-51 ARCO" no es "bocallave 5mm")
+                if ($comparte) return $this->resultado($c['fuerte'] ? 'codigo' : 'nombre', $ref[0]);
+                $varios[$ref[0]] ??= true;
+                continue;
+            }
+            // 3. código escrito suelto en el nombre de Odoo ("pinza BAHCO 2678G-160 universal")
+            $suelto = array_values(array_unique($this->porCodigoSuelto[$k] ?? []));
+            if (count($suelto) === 1 && $sueltoUnico === null && $this->comparte($suelto[0], $palabras, $marca)) {
+                $sueltoUnico = [$suelto[0], $c];
+            }
+            // sin palabras en común solo se ofrece si el código es largo: un número corto en otro producto es casualidad
+            if (!$c['fuerte'] && strlen($k) < 5) continue;
+            foreach (array_merge($ref, count($suelto) <= 8 ? $suelto : []) as $id) $varios[$id] ??= true;
+        }
+        if ($sueltoUnico) {
+            [$id, $c] = $sueltoUnico;
+            // seguro si además comparte una palabra o la marca; si solo coincide el número, se confirma
+            return $this->resultado($c['fuerte'] ? 'codigo' : 'nombre', $id);
+        }
+
+        // 4. el mismo código en varios productos: primero los de la marca del rubro, después los de nombre parecido
+        // (solo los que comparten alguna palabra o la marca: el resto es un número repetido por casualidad)
+        $varios = array_filter(array_keys($varios), fn ($id) => $this->comparte($id, $palabras, $marca));
+        if ($varios) {
+            return ['match' => 'parecido', 'odoo_product_id' => null, 'odoo_nombre' => null,
+                'candidatos' => $this->ordenarCandidatos($varios, $palabras, $norm, $marca)];
+        }
+
+        // 5. el mismo código con otra letra de variante al final: "MTG-5-19" = "MTG-5-19AR", "BKE850901N" = "bke850901".
+        //    Puede ser otra versión del producto ("8072A" fosfatizada, "8072C" cromada): siempre se confirma a mano
+        $parecidos = [];
+        foreach ($candidatos as $c) {
+            $k = $c['clave'];
+            $b = self::base($k);
+            $ids = array_merge($this->porCodigoBase[$k] ?? [], $b ? ($this->porCodigo[$b] ?? []) : [], $b ? ($this->porCodigoSuelto[$b] ?? []) : [], $b ? ($this->porCodigoNombre[$b] ?? []) : []);
+            // tiene que compartir una palabra de verdad: en una lista de una sola marca, la marca no dice nada
+            foreach (array_unique($ids) as $id) if ($this->comparte($id, $palabras, [])) $parecidos[$id] = true;
+        }
+        if (count($parecidos) === 1) return $this->resultado('nombre', array_key_first($parecidos));
+        if ($parecidos && count($parecidos) <= 5) {
+            return ['match' => 'parecido', 'odoo_product_id' => null, 'odoo_nombre' => null,
+                'candidatos' => $this->ordenarCandidatos(array_keys($parecidos), $palabras, $norm, $marca)];
+        }
+
+        // 6. serie + medida ("PU 1/2" = "llave 1/2 combinada bahco pu"): todas las palabras están en el producto
+        if ($palabras && count($palabras) <= 4 && $marca && preg_grep('/\d/', $palabras)) {
+            $ids = $this->contienenTodas($palabras, $marca);
+            if (count($ids) === 1) return $this->resultado('nombre', $ids[0]);
+            if ($ids && count($ids) <= 5) {
+                return ['match' => 'parecido', 'odoo_product_id' => null, 'odoo_nombre' => null,
+                    'candidatos' => $this->ordenarCandidatos($ids, $palabras, $norm, $marca)];
+            }
+        }
+
+        // 7. como cualquier renglón, solo por nombre (el código interno no se compara con Odoo)
+        if ($norm === '') return ['match' => 'ninguno', 'odoo_product_id' => null, 'odoo_nombre' => null, 'candidatos' => []];
+        $r = $this->buscar(null, null, $nombre);
+        // sin código en la descripción nada es seguro: "(20 UNIDADES)" en dos nombres no es el mismo producto
+        if ($r['match'] === 'codigo') $r['match'] = 'nombre';
+        if ($r['match'] === 'parecido' && $marca) {
+            $r['candidatos'] = $this->ordenarCandidatos(array_column($r['candidatos'], 'id'), $palabras, $norm, $marca);
+        }
+        return $r;
+    }
+
+    /** Código sin las 1 a 3 letras de variante del final ("MTG519AR" -> "MTG519", "1446ARG" -> "1446"); null si no tiene. */
+    private static function base(string $k): ?string
+    {
+        return preg_match('/^(.*\d)[A-Z]{1,3}$/', $k, $m) && strlen($m[1]) >= 4 ? $m[1] : null;
+    }
+
+    /** Palabras de la marca: "111-BAHCO" -> [bahco]; "026-DEWALT MAQUINAS" -> [dewalt, maquinas]. */
+    public static function tokensMarca(?string $rubro, ?string $marcaLista = null): array
+    {
+        $r = preg_replace('/^\s*\d+\s*-\s*/', '', (string) $rubro) . ' ' . $marcaLista;
+        return array_values(array_filter(self::tokens(self::normalizar($r)), fn ($t) => strlen($t) >= 3 && !preg_match('/\d/', $t)));
+    }
+
+    /** El producto comparte alguna palabra (no número) con la descripción, o es de la marca del rubro. */
+    private function comparte(int $id, array $palabras, array $marca): bool
+    {
+        $t = $this->productos[$id]['tokens'] ?? [];
+        $palabras = array_filter($palabras, fn ($p) => !preg_match('/\d/', $p) && strlen($p) >= 3);
+        foreach (array_merge($palabras, $marca) as $p) {
+            foreach ($t as $u) {
+                if ($u === $p || (strlen($u) >= 4 && strlen($p) >= 4 && (str_starts_with($u, $p) || str_starts_with($p, $u)))) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Productos de la marca que tienen todas las palabras de la descripción. @return int[] */
+    private function contienenTodas(array $palabras, array $marca): array
+    {
+        $ids = null;
+        foreach ($palabras as $p) {
+            $con = array_unique($this->porToken[$p] ?? []);
+            $ids = $ids === null ? $con : array_intersect($ids, $con);
+            if (!$ids) return [];
+        }
+        return array_values(array_filter($ids, function ($id) use ($marca, $palabras) {
+            $t = $this->productos[$id]['tokens'];
+            // la misma medida y nada más: "PU 1" no es "PU 1.1/16" ni "juego 1/4 a 1"
+            $numP = preg_grep('/\d/', $palabras);
+            $numT = preg_grep('/\d/', $t);
+            return array_intersect($marca, $t) && !array_diff($numT, $numP);
+        }));
+    }
+
+    /** @return array<int,array{id:int,nombre:string,score:float}> hasta 5, los de la marca primero */
+    private function ordenarCandidatos(array $ids, array $palabras, string $norm, array $marca): array
+    {
+        $res = [];
+        foreach (array_unique($ids) as $id) {
+            if (!isset($this->productos[$id])) continue;
+            $p = $this->productos[$id];
+            $score = $palabras ? self::similitud($palabras, $p['tokens'], $norm, $p['norm']) : 0.0;
+            $deMarca = $marca && array_intersect($marca, $p['tokens']) ? 1 : 0;
+            $res[] = ['id' => $id, 'nombre' => $p['nombre'], 'score' => round($score, 2), 'marca' => $deMarca];
+        }
+        usort($res, fn ($a, $b) => [$b['marca'], $b['score']] <=> [$a['marca'], $a['score']]);
+        return array_map(fn ($r) => array_diff_key($r, ['marca' => 1]), array_slice($res, 0, 5));
+    }
+
     /** @return array<int,array{id:int,nombre:string,score:float}> */
     public function parecidos(string $norm, int $max = 3, float $minimo = 0.45): array
     {
@@ -282,6 +463,7 @@ class Matcher
         if ($nombre === null || !preg_match_all('/[(\[]\s*([^()\[\]]{3,30}?)\s*[)\]]/u', $nombre, $m)) return [];
         $out = [];
         foreach ($m[1] as $c) {
+            $c = preg_replace('/\s*-\s*/', '-', $c);   // "( 2678- g - 160 )" -> "2678-g-160"
             if (!preg_match('/\d/', $c) || preg_match('/\s\S*\s/', $c) || self::esMedida($c)) continue;   // a lo sumo un espacio
             $k = self::codigoClave($c);
             if ($k && strlen($k) >= 4) $out[] = $k;
@@ -314,7 +496,7 @@ class Matcher
         $c = trim($c);
         // un número solo ("8172") sí puede ser código; con unidad o "x" adelante es medida o cantidad
         return (bool) preg_match('~^x\s*[\d.,]+$~i', $c)
-            || preg_match('~^[\d.,]+\s*("|\'\'|\'|´|#|mm|cm|mts?|m|kg|grs?|gs|g|lts?|l|u|un|unid|uds|pz|pzas?|v|vol|w|tn|h|dientes)\.?$~i', $c)
+            || preg_match('~^[\d.,]+\s*("|\'\'|\'|´|#|mm|cm|mts?|m|kg|grs?|gs|g|lts?|l|u|un|unid|unidades|uds|pz|pzas?|piezas|v|vol|w|tn|h|dientes)\.?$~i', $c)
             || preg_match('~^[\d.,]+$~', $c) && preg_match('~[.,]~', $c)
             || preg_match('~^\d+(\s*\d+)?/\d+~', $c);
     }

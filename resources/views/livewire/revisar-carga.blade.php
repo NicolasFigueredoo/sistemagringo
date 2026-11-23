@@ -25,13 +25,13 @@
 <div class="space-y-6">
     <x-cargando target="aplicar,aplicarMargenMasivo,sumarIva,iva,elegir,ignorar,recorrer,siguiente,aplicarCategoria,crearTodos,crearEnOtro,crearEnEste,guardarCrear,crearRapido,quitar" />
 
-    <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
+    <div class="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
+        <div class="min-w-0">
             <a href="{{ \App\Support\Instancia::ruta('historial') }}" class="text-xs font-medium text-slate-500 hover:text-slate-700">Historial</a>
             <span class="text-xs text-slate-300">/</span>
             <span class="text-xs text-slate-500">Revisión</span>
-            <h1 class="page-title mt-1">{{ $carga->titulo }}</h1>
-            <p class="page-subtitle">
+            <h1 class="page-title mt-1 break-words">{{ $carga->titulo }}</h1>
+            <p class="page-subtitle break-words">
                 {{ $carga->archivo }} · {{ $carga->created_at->format('d/m/Y H:i') }}
                 @if($carga->descuento > 0) · Descuento {{ $carga->descuento_texto ? $carga->descuento_texto . ' (' . $pct($carga->descuento) . '%)' : $pct($carga->descuento) . '%' }} @endif
                 @if($carga->es_factura)
@@ -59,7 +59,7 @@
 
     @if($carga->estado === 'aplicando')
         @php $total = max(1, (int) $carga->progreso_total); $hecho = (int) $carga->progreso_hecho; @endphp
-        <div wire:poll.3s="progreso" class="card px-5 py-4">
+        <div wire:poll.3s="progreso" class="card px-4 py-4 sm:px-5">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <div class="flex items-center gap-2 text-sm font-medium text-slate-900">
                     <x-icon name="loader" class="h-4 w-4 animate-spin text-brand-600" />
@@ -76,25 +76,25 @@
     @endif
 
     {{-- Resumen --}}
-    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div class="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
         @foreach([['Encontrados', $conteo['verde'], 'text-emerald-600'], ['Para confirmar', $conteo['amarillo'] + $conteo['naranja'], 'text-amber-600'], ['Sin coincidencia', $conteo['gris'], 'text-slate-500'], ['Seleccionados', $seleccionados, 'text-brand-600']] as [$t, $n, $c])
             <div class="card px-4 py-3">
                 <div class="text-xs font-medium text-slate-500">{{ $t }}</div>
-                <div class="mt-1 text-2xl font-semibold {{ $c }}">{{ number_format($n, 0, ',', '.') }}</div>
+                <div class="mt-1 text-xl font-semibold sm:text-2xl {{ $c }}">{{ number_format($n, 0, ',', '.') }}</div>
             </div>
         @endforeach
     </div>
 
     @if($carga->es_factura)
     <section class="card">
-        <div class="card-body flex flex-wrap items-start gap-6">
+        <div class="card-body flex flex-wrap items-start gap-4 sm:gap-6">
             @if($editable)
-            <div>
+            <div class="w-full sm:w-auto">
                 <span class="label">IVA de los precios de la factura</span>
-                <div class="inline-flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                <div class="grid grid-cols-3 gap-1 rounded-lg border border-slate-200 bg-white p-1 sm:inline-flex">
                     @foreach(['tal_cual' => 'Tal cual', 'sacar' => 'Sacar IVA', 'agregar' => 'Agregar IVA'] as $k => $texto)
                         <button type="button" wire:click="$set('iva', '{{ $k }}')"
-                                class="rounded-md px-3 py-1.5 text-sm font-medium {{ $iva === $k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50' }}">
+                                class="rounded-md px-2 py-1.5 text-sm font-medium sm:px-3 {{ $iva === $k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50' }}">
                             {{ $texto }}
                         </button>
                     @endforeach
@@ -128,12 +128,12 @@
     @elseif($editable && (!$carga->solo_costo || $categorias->count()))
     <section class="card">
         @unless($carga->solo_costo)
-        <div class="card-body flex flex-wrap items-end gap-6">
+        <div class="card-body flex flex-wrap items-end gap-4 sm:gap-6">
             <div>
                 <span class="label">Ganancia para todos</span>
                 <div class="flex gap-2">
                     <div class="relative">
-                        <input wire:model="margenMasivo" type="text" inputmode="decimal" class="input w-28 pr-8">
+                        <input wire:model="margenMasivo" type="text" inputmode="decimal" class="input w-24 pr-8 sm:w-28">
                         <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
                     </div>
                     <button wire:click="aplicarMargenMasivo" wire:confirm="¿Aplicar este porcentaje a todos los productos? Se pierden los precios editados a mano."
@@ -151,16 +151,16 @@
 
         @if($categorias->count())
         <div class="{{ $carga->solo_costo ? '' : 'border-t border-slate-200' }}" x-data="{ abierto: false }">
-            <button type="button" @click="abierto = !abierto" class="flex w-full items-center justify-between px-5 py-3 text-left hover:bg-slate-50">
+            <button type="button" @click="abierto = !abierto" class="flex w-full items-center justify-between gap-3 px-4 py-3 sm:px-5 text-left hover:bg-slate-50">
                 <span class="text-sm font-medium text-slate-700">{{ $carga->solo_costo ? 'Descuento por categoría' : 'Ganancia y descuento por categoría' }} <span class="font-normal text-slate-400">· {{ $categorias->count() }} categorías</span></span>
                 <x-icon name="chevron-down" class="h-4 w-4 text-slate-400 transition-transform" x-bind:class="abierto && 'rotate-180'" />
             </button>
             <div x-show="abierto" x-cloak class="border-t border-slate-100">
-                <p class="px-5 pt-3 text-xs text-slate-500">Dejá vacío lo que no quieras cambiar. Al aplicar se filtran abajo los productos de esa categoría.</p>
+                <p class="px-4 pt-3 text-xs sm:px-5 text-slate-500">Dejá vacío lo que no quieras cambiar. Al aplicar se filtran abajo los productos de esa categoría.</p>
                 <div class="divide-y divide-slate-100">
                     @foreach($categorias as $cat)
-                        <div wire:key="cat-{{ $cat->id }}" class="flex flex-wrap items-center gap-4 px-5 py-3">
-                            <div class="min-w-[220px] flex-1">
+                        <div wire:key="cat-{{ $cat->id }}" class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5">
+                            <div class="w-full sm:w-auto sm:min-w-[220px] sm:flex-1">
                                 <div class="text-sm font-medium text-slate-900">{{ $cat->nombre }}</div>
                                 <div class="text-xs text-slate-500">{{ $cat->cant }} productos</div>
                             </div>
@@ -185,12 +185,34 @@
     </section>
     @endif
 
+    @if($monedas->count())
+    <section class="card">
+        <div class="card-body flex flex-wrap items-end gap-4 sm:gap-6">
+            @foreach(['USD' => ['dólar', 'dólares', 'cotizacionDolar'], 'EUR' => ['euro', 'euros', 'cotizacionEuro']] as $mon => [$nombreMon, $plural, $campo])
+                @if($monedas->has($mon))
+                <label class="block">
+                    <span class="label">Cotización del {{ $nombreMon }}</span>
+                    <div class="relative">
+                        <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                        <input wire:model="{{ $campo }}" type="text" inputmode="decimal" @disabled(!$editable) class="input w-32 pl-7 text-right">
+                    </div>
+                    <span class="mt-1 block text-xs text-slate-500">{{ $monedas[$mon] }} {{ $monedas[$mon] == 1 ? 'producto' : 'productos' }} en {{ $plural }}</span>
+                </label>
+                @endif
+            @endforeach
+            @if($editable)
+                <button wire:click="cambiarCotizacion" class="btn-secondary mb-5">Recalcular precios</button>
+            @endif
+        </div>
+    </section>
+    @endif
+
     {{-- Filtros --}}
     <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="inline-flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1">
+        <div class="no-scrollbar flex w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 sm:inline-flex sm:w-auto sm:flex-wrap">
             @foreach($filtros as $k => [$label, $dot])
                 <button wire:click="$set('filtro', '{{ $k }}')"
-                        class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium {{ $filtro === $k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50' }}">
+                        class="flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium {{ $filtro === $k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50' }}">
                     @if($dot)<span class="dot {{ $dot }}"></span>@endif
                     {{ $label }}
                     <span class="text-xs {{ $filtro === $k ? 'text-slate-300' : 'text-slate-400' }}">{{ $conteo[$k] }}</span>
@@ -198,8 +220,17 @@
             @endforeach
         </div>
 
+        @if($rubros->count())
+            <select wire:model.live="rubroFiltro" class="input w-full sm:w-auto sm:min-w-[260px]">
+                <option value="">Todos los rubros ({{ $rubros->count() }})</option>
+                @foreach($rubros as $r)
+                    <option value="{{ $r->rubro }}">{{ $r->rubro }} — {{ $r->ok }} de {{ $r->total }} encontrados</option>
+                @endforeach
+            </select>
+        @endif
+
         @if($categorias->count())
-            <select wire:model.live="categoriaFiltro" class="input w-auto min-w-[220px]">
+            <select wire:model.live="categoriaFiltro" class="input w-full sm:w-auto sm:min-w-[220px]">
                 <option value="">Todas las categorías</option>
                 @foreach($categorias as $cat)
                     <option value="{{ $cat->id }}">{{ $cat->nombre }} ({{ $cat->cant }})</option>
@@ -209,18 +240,18 @@
     </div>
 
     @if($sospechosos > 0)
-        <div class="alert-error items-center">
+        <div class="alert-error flex-wrap items-center">
             <x-icon name="alert" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($sospechosos, 0, ',', '.') }}</b> productos cambian el costo más de 50% y quedaron <b>sin marcar</b>: puede ser un precio mal leído. Comparalos con la lista y marcá los que estén bien.</span>
-            <button wire:click="$set('filtro', 'rojo')" class="btn-secondary shrink-0 px-3 py-1.5 text-xs">Ver cuáles</button>
+            <span class="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0"><b>{{ number_format($sospechosos, 0, ',', '.') }}</b> productos cambian el costo más de 50% y quedaron <b>sin marcar</b>: puede ser un precio mal leído. Comparalos con la lista y marcá los que estén bien.</span>
+            <button wire:click="$set('filtro', 'rojo')" class="btn-secondary ml-7 sm:ml-0 sm:shrink-0 px-3 py-1.5 text-xs">Ver cuáles</button>
         </div>
     @endif
 
     @if($pendientes > 0)
-        <div class="alert-info items-center">
+        <div class="alert-info flex-wrap items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($pendientes, 0, ',', '.') }}</b> productos no se encontraron por código de barras ni referencia. Revisalos uno por uno: asocialos a un producto de Odoo, crealos nuevos o marcá "No hacer nada".</span>
-            <div class="flex shrink-0 flex-wrap gap-2">
+            <span class="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0"><b>{{ number_format($pendientes, 0, ',', '.') }}</b> productos no se encontraron por código de barras ni referencia. Revisalos uno por uno: asocialos a un producto de Odoo, crealos nuevos o marcá "No hacer nada".</span>
+            <div class="ml-7 flex min-w-0 flex-1 flex-wrap gap-2 sm:ml-0 sm:flex-none sm:shrink-0">
                 <button wire:click="recorrer" class="btn-primary px-3 py-1.5 text-xs"><x-icon name="search" class="h-3.5 w-3.5" /> Revisar uno por uno</button>
                 @unless($carga->es_ajuste)
                 <button wire:click="crearTodos" wire:confirm="Se van a marcar para crear como productos nuevos{{ $otroNombre ? ' (en los dos Odoo)' : '' }} todos los que no se encontraron. Se crean recién al tocar &quot;Actualizar en Odoo&quot;. ¿Seguimos?"
@@ -231,10 +262,10 @@
     @endif
 
     @if($faltanOtro > 0)
-        <div class="alert-info items-center">
+        <div class="alert-info flex-wrap items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($faltanOtro, 0, ',', '.') }}</b> productos están en el {{ $esteNombre }} pero <b>no existen en el {{ $otroNombre }}</b>: ahí no se actualiza el costo ni se suma el stock.</span>
-            <div class="flex shrink-0 flex-wrap gap-2">
+            <span class="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0"><b>{{ number_format($faltanOtro, 0, ',', '.') }}</b> productos están en el {{ $esteNombre }} pero <b>no existen en el {{ $otroNombre }}</b>: ahí no se actualiza el costo ni se suma el stock.</span>
+            <div class="ml-7 flex min-w-0 flex-1 flex-wrap gap-2 sm:ml-0 sm:flex-none sm:shrink-0">
                 <button wire:click="$set('filtro', 'falta')" class="btn-secondary px-3 py-1.5 text-xs">Ver cuáles</button>
                 <button wire:click="crearEnOtro" class="btn-secondary px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $otroNombre }}</button>
             </div>
@@ -242,10 +273,10 @@
     @endif
 
     @if($faltanEste > 0)
-        <div class="alert-info items-center">
+        <div class="alert-info flex-wrap items-center">
             <x-icon name="info" class="h-4 w-4 shrink-0" />
-            <span class="flex-1"><b>{{ number_format($faltanEste, 0, ',', '.') }}</b> productos están en el {{ $otroNombre }} pero <b>no existen en el {{ $esteNombre }}</b>. Se pueden crear acá con los datos del {{ $otroNombre }} (nombre, categoría, venta, códigos).</span>
-            <div class="flex shrink-0 flex-wrap gap-2">
+            <span class="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-0"><b>{{ number_format($faltanEste, 0, ',', '.') }}</b> productos están en el {{ $otroNombre }} pero <b>no existen en el {{ $esteNombre }}</b>. Se pueden crear acá con los datos del {{ $otroNombre }} (nombre, categoría, venta, códigos).</span>
+            <div class="ml-7 flex min-w-0 flex-1 flex-wrap gap-2 sm:ml-0 sm:flex-none sm:shrink-0">
                 <button wire:click="$set('filtro', 'falta')" class="btn-secondary px-3 py-1.5 text-xs">Ver cuáles</button>
                 <button wire:click="crearEnEste" class="btn-secondary px-3 py-1.5 text-xs"><x-icon name="plus" class="h-3.5 w-3.5" /> Crearlos en el {{ $esteNombre }}</button>
             </div>
@@ -254,7 +285,7 @@
 
     {{-- Tabla --}}
     <div class="card overflow-x-auto">
-        <table class="table">
+        <table class="table table-cards">
             <thead>
                 <tr>
                     <th class="w-16">
@@ -279,27 +310,29 @@
             @forelse($items as $it)
                 @php [$badge, $dot, $txt] = $estilos[$it->color]; $var = $it->variacion; $grande = $var !== null && abs($var) > 30; if ($it->match === 'ignorado') $txt = 'No hacer nada'; @endphp
                 <tr wire:key="it-{{ $it->id }}" class="{{ $it->error ? 'bg-red-50/60' : ($it->seleccionado ? '' : 'bg-slate-50/50') }}">
-                    <td class="text-center">
+                    <td class="td-check text-center">
                         @if($it->odoo_product_id || $it->crear)
-                            <input type="checkbox" class="mt-0.5 h-4 w-4 cursor-pointer rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                            <input type="checkbox" class="mt-0.5 h-5 w-5 md:h-4 md:w-4 cursor-pointer rounded border-slate-300 text-brand-600 focus:ring-brand-500"
                                    @checked($it->seleccionado) @disabled(!$editable) wire:click="toggle({{ $it->id }})">
                         @endif
                         @if($it->aplicado)<div class="mt-1 text-[11px] font-semibold text-emerald-600">OK</div>@endif
                     </td>
 
-                    <td class="max-w-xs {{ $it->seleccionado ? '' : 'opacity-70' }}">
-                        <div class="font-medium text-slate-900">{{ $it->nombre ?: 'Sin descripción' }}</div>
-                        <div class="mt-0.5 space-x-1 text-xs text-slate-500">
+                    <td class="td-junto-check max-w-xs {{ $it->seleccionado ? '' : 'opacity-70' }}">
+                        <div class="break-words font-medium text-slate-900">{{ $it->nombre ?: 'Sin descripción' }}</div>
+                        <div class="mt-0.5 space-x-1 break-words text-xs text-slate-500">
                             @if($it->barcode)<span class="font-mono">{{ $it->barcode }}</span><span>·</span>@endif
                             @if($it->codigo)<span>Cód. {{ $it->codigo }}</span><span>·</span>@endif
                             @if($it->unidad && !is_numeric($it->unidad))<span>{{ $it->unidad }}</span><span>·</span>@endif
                             <span>{{ $carga->es_factura ? 'Factura' : 'Lista' }} {{ $m($it->precio_lista) }}</span>
+                            @if(in_array($it->moneda, ['USD', 'EUR'], true))<span class="font-medium text-amber-700">({{ $it->moneda === 'USD' ? 'US$' : '€' }} {{ number_format((float) $it->precio_origen, 2, ',', '.') }})</span>@endif
+                            @if($it->rubro)<span>·</span><button type="button" wire:click="$set('rubroFiltro', @js($it->rubro))" class="hover:text-slate-800 hover:underline" title="Ver solo este rubro">{{ $it->rubro }}</button>@endif
                             @if($carga->es_factura && (float) $it->cantidad > 0)<span>· x {{ $cant($it->cantidad) }}</span>@endif
                             @if((float) $it->descuento > 0)<span>· Dto. {{ $carga->descuento_texto && abs((float) $it->descuento - (float) $carga->descuento) < 0.01 ? $carga->descuento_texto : $pct($it->descuento) . '%' }}</span>@endif
                         </div>
                     </td>
 
-                    <td class="max-w-sm">
+                    <td class="td-separado max-w-sm">
                         <span class="{{ $badge }}"><span class="dot {{ $dot }}"></span>{{ $txt }}</span>
                         @if($it->odoo_product_id)
                             <div class="mt-1 font-medium text-slate-900">@if($dosOdoo)<span class="text-[11px] font-normal text-slate-500">{{ $esteNombre }}:</span> @endif{{ $it->odoo_nombre }}</div>
@@ -360,7 +393,7 @@
                                             <span class="truncate">{{ $cand['nombre'] }}</span>
                                         </button>
                                     @endforeach
-                                    <div class="mt-1 flex items-center gap-3">
+                                    <div class="mt-1 flex flex-wrap items-center gap-2 sm:gap-3">
                                         <button wire:click="abrirBuscador({{ $it->id }})" class="btn-secondary px-2.5 py-1 text-xs">
                                             <x-icon name="search" class="h-3.5 w-3.5" /> Buscar producto
                                         </button>
@@ -379,12 +412,12 @@
                         @if($it->error)<div class="mt-1 text-xs text-red-600">{{ $it->error }}</div>@endif
                     </td>
 
-                    <td class="whitespace-nowrap text-right">
+                    <td class="td-half whitespace-nowrap text-right" data-label="Costo">
                         @if($it->costo_anterior !== null)
                             <div class="text-xs text-slate-400">Antes {{ $m($it->costo_anterior) }}</div>
                         @endif
                         @if($editable && !$carga->es_ajuste)
-                            <div class="relative ml-auto w-32">
+                            <div class="relative ml-auto w-32 max-md:ml-0 max-md:w-full">
                                 <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
                                 <input type="text" inputmode="decimal" value="{{ number_format((float) $it->costo_nuevo, 2, ',', '.') }}"
                                        wire:change="cambiarCosto({{ $it->id }}, $event.target.value)"
@@ -403,8 +436,8 @@
                     </td>
 
                     @unless($carga->solo_costo)
-                    <td class="text-center">
-                        <div class="relative mx-auto w-24">
+                    <td class="td-half text-center" data-label="Ganancia">
+                        <div class="relative mx-auto w-24 max-md:mx-0 max-md:w-full">
                             <input type="text" inputmode="decimal" value="{{ $pct($it->margen) }}" @disabled(!$editable)
                                    wire:change="cambiarMargen({{ $it->id }}, $event.target.value)"
                                    class="input pr-7 text-center">
@@ -412,11 +445,11 @@
                         </div>
                     </td>
 
-                    <td class="whitespace-nowrap text-right">
+                    <td class="td-half whitespace-nowrap text-right" data-label="Precio de venta">
                         @if($it->precio_anterior !== null)
                             <div class="text-xs text-slate-400">Antes {{ $m($it->precio_anterior) }}</div>
                         @endif
-                        <div class="relative ml-auto w-36">
+                        <div class="relative ml-auto w-36 max-md:ml-0 max-md:w-full">
                             <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
                             <input type="text" inputmode="decimal" value="{{ number_format((float) $it->precio_nuevo, 2, ',', '.') }}" @disabled(!$editable)
                                    wire:change="cambiarPrecio({{ $it->id }}, $event.target.value)"
@@ -427,7 +460,7 @@
                     @endunless
 
                     @unless($carga->es_ajuste)
-                    <td class="text-center">
+                    <td class="td-half text-center" data-label="Ingresa">
                         @php
                             // stock en cada Odoo: [nombre, existe (o se crea), había, ya sumado]
                             $stocks = [[$esteNombre, $it->odoo_product_id || $it->crear, $it->stock_anterior, $it->stock_aplicado]];
@@ -437,8 +470,8 @@
                         @if($it->odoo_product_id || $it->crear || ($dosOdoo && $it->otro_product_id))
                             <input type="text" inputmode="decimal" placeholder="—" value="{{ $it->cantidad !== null ? $cant($it->cantidad) : '' }}" @disabled(!$editable)
                                    wire:change="cambiarCantidad({{ $it->id }}, $event.target.value)" title="Unidades que ingresan"
-                                   class="input mx-auto w-20 text-center {{ $ingresa ? '!border-brand-500 bg-brand-50' : '' }}">
-                            <div class="mt-1 space-y-0.5 whitespace-nowrap text-[11px]">
+                                   class="input mx-auto w-20 text-center max-md:mx-0 max-md:w-full {{ $ingresa ? '!border-brand-500 bg-brand-50' : '' }}">
+                            <div class="mt-1 space-y-0.5 text-[11px] md:whitespace-nowrap">
                                 @foreach($stocks as [$nom, $existe, $habia, $sumado])
                                     <div class="{{ $existe ? 'text-slate-500' : 'text-amber-700' }}">
                                         @if(count($stocks) > 1)<span class="font-medium">{{ ucfirst($corto($nom)) }}:</span>@endif
@@ -467,9 +500,9 @@
     {{ $items->links() }}
 
     @if($editable)
-    <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:px-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-            <div class="text-sm text-slate-600">
+    <div class="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 sm:py-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+            <div class="text-xs text-slate-600 sm:text-sm">
                 {{ $carga->solo_costo ? 'Se va a actualizar el costo de' : 'Se van a actualizar' }} <span class="text-lg font-semibold text-slate-900">{{ number_format($seleccionados, 0, ',', '.') }}</span> productos en Odoo.
                 @if($dosOdoo && ($conStock || $conStockOtro))
                     Se suma stock a <span class="font-semibold text-slate-900">{{ number_format($conStock, 0, ',', '.') }}</span> en el {{ $esteNombre }}
@@ -479,7 +512,7 @@
             </div>
             <button wire:click="aplicar" @disabled($seleccionados + $aCrear === 0)
                     wire:confirm="Vas a actualizar {{ $seleccionados }} productos{{ $aCrear ? ' y crear ' . $aCrear . ' nuevos' : '' }} en Odoo. ¿Confirmás?"
-                    class="btn-success btn-lg">
+                    class="btn-success btn-lg max-sm:w-full">
                 <x-icon name="check" />
                 Actualizar en Odoo
             </button>
@@ -489,9 +522,9 @@
 
     {{-- Buscador manual --}}
     @if($buscando)
-    <div class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-900/30 px-4 py-10" wire:click.self="cerrarBuscador">
-        <div class="w-full max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-            <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+    <div class="fixed inset-0 z-40 !mt-0 flex items-start justify-center overflow-y-auto bg-slate-900/30 sm:px-4 sm:py-10" wire:click.self="cerrarBuscador">
+        <div class="min-h-full w-full max-w-2xl bg-white shadow-xl sm:min-h-0 sm:overflow-hidden sm:rounded-lg sm:border sm:border-slate-200">
+            <div class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:static sm:px-5">
                 <div class="min-w-0">
                     <div class="text-xs font-medium text-slate-500">{{ $carga->es_factura ? 'Factura' : 'Lista del proveedor' }} · fila {{ $buscando->fila }}@if($recorriendo) · quedan {{ $pendientes }} sin encontrar @endif</div>
                     <h3 class="mt-0.5 text-base font-semibold text-slate-900">{{ $buscando->nombre ?: 'Sin descripción' }}</h3>
@@ -531,10 +564,10 @@
                 @endif
             </div>
 
-            <div class="max-h-[50vh] divide-y divide-slate-100 overflow-y-auto border-t border-slate-100">
+            <div class="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto border-t border-slate-100">
                 @forelse($resultados as $r)
                     @php $dif = (float) $r['costo'] > 0 ? round(((float) $buscando->costo_nuevo / (float) $r['costo'] - 1) * 100, 1) : null; @endphp
-                    <button wire:click="elegir({{ $buscando->id }}, {{ $r['id'] }})" wire:key="res-{{ $r['id'] }}" class="flex w-full items-center gap-4 px-5 py-3 text-left hover:bg-slate-50">
+                    <button wire:click="elegir({{ $buscando->id }}, {{ $r['id'] }})" wire:key="res-{{ $r['id'] }}" class="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-slate-50 sm:flex-row sm:items-center sm:gap-4 sm:px-5">
                         <div class="min-w-0 flex-1">
                             <div class="text-sm font-medium text-slate-900">{{ $r['nombre'] }}</div>
                             <div class="mt-0.5 space-x-1 text-xs text-slate-500">
@@ -543,7 +576,7 @@
                                 <span>Venta {{ $m($r['precio']) }}</span>
                             </div>
                         </div>
-                        <div class="shrink-0 text-right text-xs">
+                        <div class="shrink-0 text-xs sm:text-right">
                             <div class="text-slate-500">Costo actual <b class="text-slate-800">{{ $m($r['costo']) }}</b></div>
                             @if($dif !== null)
                                 <div class="mt-0.5 font-medium {{ abs($dif) > 30 ? 'rounded bg-red-50 px-1.5 text-red-700 ring-1 ring-red-600/20' : ($dif > 0 ? 'text-red-600' : 'text-emerald-600') }}">
@@ -557,8 +590,8 @@
                 @endforelse
             </div>
 
-            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
-                <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
+                <div class="flex w-full flex-wrap gap-2 sm:w-auto max-sm:[&>*]:flex-1">
                     <button wire:click="ignorar({{ $buscando->id }})" class="btn-secondary text-sm" title="No se actualiza y en las próximas listas de este proveedor viene ignorado">
                         No hacer nada
                     </button>
@@ -577,9 +610,9 @@
     @endif
     {{-- Crear producto nuevo --}}
     @if($creando)
-    <div class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-900/30 px-4 py-10" wire:click.self="cerrarCrear">
-        <div class="w-full max-w-xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-            <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+    <div class="fixed inset-0 z-40 !mt-0 flex items-start justify-center overflow-y-auto bg-slate-900/30 sm:px-4 sm:py-10" wire:click.self="cerrarCrear">
+        <div class="min-h-full w-full max-w-xl bg-white shadow-xl sm:min-h-0 sm:overflow-hidden sm:rounded-lg sm:border sm:border-slate-200">
+            <div class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:static sm:px-5">
                 <div class="min-w-0">
                     <div class="text-xs font-medium text-slate-500">Producto nuevo · {{ $carga->es_factura ? 'Factura' : 'Lista' }} fila {{ $creando->fila }}@if($recorriendo) · quedan {{ $pendientes }} sin encontrar @endif</div>
                     <h3 class="mt-0.5 text-base font-semibold text-slate-900">{{ $creando->nombre ?: 'Sin descripción' }}</h3>
@@ -593,7 +626,7 @@
                 <button wire:click="cerrarCrear" class="btn-ghost shrink-0 px-1.5 py-1.5"><x-icon name="x" /></button>
             </div>
 
-            <form wire:submit="guardarCrear" class="space-y-4 p-5">
+            <form wire:submit="guardarCrear" class="space-y-4 p-4 sm:p-5">
                 <div>
                     <label class="label">Nombre en Odoo</label>
                     <input wire:model="crearNombre" type="text" class="input" autofocus>
@@ -641,8 +674,8 @@
                     @if($creando->barcode) Lleva el código de barras {{ $creando->barcode }}. @endif
                 </p>
                 <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
-                    <button type="button" wire:click="cerrarCrear" class="btn-ghost text-sm">Cancelar</button>
-                    <button type="submit" class="btn-primary text-sm"><x-icon name="plus" class="h-3.5 w-3.5" /> {{ $recorriendo ? 'Crear y seguir' : 'Crear' }}</button>
+                    <button type="button" wire:click="cerrarCrear" class="btn-ghost text-sm max-sm:flex-1">Cancelar</button>
+                    <button type="submit" class="btn-primary text-sm max-sm:flex-1"><x-icon name="plus" class="h-3.5 w-3.5" /> {{ $recorriendo ? 'Crear y seguir' : 'Crear' }}</button>
                 </div>
             </form>
         </div>

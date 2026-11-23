@@ -14,7 +14,7 @@
     @endif
 
     <div class="card overflow-x-auto">
-        <table class="table">
+        <table class="table table-cards">
             <thead>
                 <tr>
                     <th>Carga</th>
@@ -29,11 +29,11 @@
                 <tr wire:key="c-{{ $c->id }}">
                     <td class="!align-middle">
                         <div class="font-medium text-slate-900">{{ $c->titulo }}</div>
-                        <div class="max-w-xs truncate text-xs text-slate-500">{{ $c->archivo }}</div>
+                        <div class="max-w-xs truncate text-xs text-slate-500 max-md:max-w-full">{{ $c->archivo }}</div>
                     </td>
-                    <td class="!align-middle whitespace-nowrap text-slate-600">{{ $c->created_at->format('d/m/Y H:i') }}</td>
-                    <td class="!align-middle text-right tabular-nums text-slate-600">{{ number_format($c->items_count, 0, ',', '.') }}</td>
-                    <td class="!align-middle whitespace-nowrap">
+                    <td class="td-half !align-middle whitespace-nowrap text-slate-600" data-label="Fecha">{{ $c->created_at->format('d/m/Y H:i') }}</td>
+                    <td class="td-half !align-middle text-right tabular-nums text-slate-600" data-label="Renglones">{{ number_format($c->items_count, 0, ',', '.') }}</td>
+                    <td class="!align-middle whitespace-nowrap" data-label="Estado">
                         @if($c->estado === 'revision')
                             <span class="badge-yellow"><span class="dot bg-amber-500"></span>Sin aplicar</span>
                         @elseif($c->estado === 'aplicada')
@@ -47,7 +47,7 @@
                         @endif
                     </td>
                     <td class="!align-middle">
-                        <div class="flex justify-end gap-2">
+                        <div class="flex justify-end gap-2 max-md:justify-start max-md:[&>*]:flex-1 max-md:[&>*]:py-2">
                             @if($c->estado === 'revision')
                                 <a href="{{ \App\Support\Instancia::ruta('revisar', $c) }}" class="btn-primary px-3 py-1.5 text-xs">Continuar</a>
                                 <button wire:click="eliminar({{ $c->id }})" wire:confirm="¿Borrar esta carga? No modifica Odoo." class="btn-ghost px-3 py-1.5 text-xs">Borrar</button>

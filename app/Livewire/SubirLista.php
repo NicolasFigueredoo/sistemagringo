@@ -7,6 +7,7 @@ use App\Models\Proveedor;
 use App\Services\DescargaLista;
 use App\Services\LectorLista;
 use App\Services\LectorListaIA;
+use App\Services\LectorSysvent;
 use App\Services\OdooClient;
 use App\Services\Precios;
 use App\Services\Procesador;
@@ -37,6 +38,11 @@ class SubirLista extends Component
     public int $ncols = 0;
     public int $totalFilas = 0;
     public array $columnas = ['fila_inicio' => 1, 'col_barcode' => null, 'col_codigo' => null, 'col_nombre' => null, 'col_precio' => null, 'col_cantidad' => null];
+
+    /** Lista Sysvent (Angel M. Beber): monedas que trae, ej. ['ARS' => 3527, 'USD' => 5] */
+    #[Locked] public ?array $sysvent = null;
+    public string $cotizacionDolar = '';
+    public string $cotizacionEuro = '';
 
     public $descuento = 0;
     public bool $ivaIncluido = false;
@@ -194,6 +200,7 @@ class SubirLista extends Component
         }
 
         $this->totalFilas = count($filas);
+        $this->sysvent = null;
         $this->preview = array_slice($filas, 0, 15);
         $this->ncols = max(array_map('count', $this->preview));
 
@@ -214,6 +221,18 @@ class SubirLista extends Component
             }
         }
         if (!empty($sug['aviso'])) $avisos[] = $sug['aviso'];
+
+        // Sysvent: las columnas se conocen; el código de cada producto se busca dentro de la descripción
+        if (LectorSysvent::es($filas) && ($sv = LectorSysvent::columnas($filas))) {
+            $guardado = $p && $p->col_precio !== null ? (int) $p->col_precio : null;   // ej. si eligió Pr.Neto la vez pasada
+            $this->columnas = array_intersect_key($sv, $this->columnas);
+            if ($guardado !== null && isset($filas[$sv['fila_inicio'] - 2][$guardado])) $this->columnas['col_precio'] = $guardado;
+            $renglones = LectorSysvent::renglones($filas, $sv);
+            $this->sysvent = array_count_values(array_column($renglones, 'moneda'));
+            $rubros = count(array_unique(array_filter(array_column($renglones, 'rubro'))));
+            $avisos = ['Lista de Sysvent (Angel M. Beber): ' . count($renglones) . " productos en $rubros rubros."
+                . ' El código de cada producto se busca dentro de la descripción y la asociación se recuerda para la próxima lista.'];
+        }
         $this->aviso = $avisos ? implode(' ', $avisos) : null;
     }
 
@@ -270,6 +289,8 @@ class SubirLista extends Component
                     'iva_incluido' => $this->ivaIncluido,
                     'sumar_iva'    => true,   // se puede cambiar en la revisión
                     'redondeo'     => 0,
+                    'cotizacion_dolar' => Precios::numero($this->cotizacionDolar) ?: null,
+                    'cotizacion_euro'  => Precios::numero($this->cotizacionEuro) ?: null,
                 ]
             );
         } catch (\Throwable $e) {

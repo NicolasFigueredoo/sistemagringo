@@ -31,6 +31,11 @@ class RevisarCarga extends Component
     public Carga $carga;
     public string $filtro = 'todos';     // todos (sin los grises) | verde | amarillo | naranja | crear | falta | gris | rojo
     public $categoriaFiltro = '';         // id de categoría para filtrar la tabla
+    public string $rubroFiltro = '';      // lista Sysvent: rubro / marca ("070-KNIPEX")
+
+    // lista Sysvent con precios en dólares o euros
+    public string $cotizacionDolar = '';
+    public string $cotizacionEuro = '';
 
     // bloque "Por categoría": [categoria_id => valor]
     public array $catMargen = [];
@@ -64,6 +69,20 @@ class RevisarCarga extends Component
         $this->iva = $carga->agregar_iva ? 'agregar' : ($carga->iva_incluido ? 'sacar' : 'tal_cual');
         $this->margenMasivo = (string) (($carga->proveedor?->margen ?? $carga->categoria?->margen ?? 0) + 0);
         $this->mensaje = session('aviso');
+        $this->cotizacionDolar = $carga->cotizacion_dolar ? rtrim(rtrim((string) $carga->cotizacion_dolar, '0'), '.') : '';
+        $this->cotizacionEuro = $carga->cotizacion_euro ? rtrim(rtrim((string) $carga->cotizacion_euro, '0'), '.') : '';
+    }
+
+    public function updatedRubroFiltro(): void { $this->resetPage(); }
+
+    public function cambiarCotizacion(): void
+    {
+        if (!$this->editable()) return;
+        $dolar = Precios::numero($this->cotizacionDolar);
+        $euro = Precios::numero($this->cotizacionEuro);
+        $n = $this->proc()->cambiarCotizacion($this->carga, $dolar, $euro);
+        $this->carga->refresh();
+        $this->mensaje = $n ? "Se recalcularon $n productos con la cotización nueva. Revisalos y marcalos para actualizar." : 'Cargá la cotización para convertir los precios.';
     }
 
     private function proc(): Procesador
@@ -407,6 +426,7 @@ class RevisarCarga extends Component
         if ($this->categoriaFiltro !== '' && $this->categoriaFiltro !== null) {
             $q->where('categoria_id', (int) $this->categoriaFiltro);
         }
+        if ($this->rubroFiltro !== '') $q->where('rubro', $this->rubroFiltro);
         return match ($this->filtro) {
             'verde'    => $q->whereIn('match', self::VERDES),
             'amarillo' => $q->where('match', 'nombre'),
@@ -472,6 +492,12 @@ class RevisarCarga extends Component
 
         return view('livewire.revisar-carga', [
             'categorias'   => $categorias,
+            // rubros de la lista Sysvent, con cuántos productos encontrados / total
+            'rubros'       => $this->carga->formato === 'sysvent' ? $this->carga->items()->whereNotNull('rubro')
+                                ->selectRaw("rubro, COUNT(*) as total, SUM(CASE WHEN \"match\" IN ('barcode','mapeo','codigo','manual','creado') THEN 1 ELSE 0 END) as ok")
+                                ->groupBy('rubro')->orderBy('rubro')->get() : collect(),
+            'monedas'      => $this->carga->formato === 'sysvent' ? $this->carga->items()->whereIn('moneda', ['USD', 'EUR'])
+                                ->selectRaw('moneda, COUNT(*) as cant')->groupBy('moneda')->pluck('cant', 'moneda') : collect(),
             'items'        => $this->filtrar($this->carga->items())->orderBy('fila')->paginate(50),
             'conteo'       => $conteo,
             'seleccionados'=> (clone $base)->where('seleccionado', true)->whereNotNull('odoo_product_id')->count(),
@@ -497,6 +523,7 @@ class RevisarCarga extends Component
 
     private function filtrarCon(string $f)
     {
+        // el contador de cada estado respeta el rubro elegido (para ver cuántos faltan de esa marca)
         [$orig, $origCat] = [$this->filtro, $this->categoriaFiltro];
         [$this->filtro, $this->categoriaFiltro] = [$f, ''];
         $q = $this->filtrar($this->carga->items());

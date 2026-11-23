@@ -22,7 +22,7 @@
         @foreach([['Categorías con ganancia', $categorias, 'text-brand-600'], ['Productos a reajustar', $productos, 'text-emerald-600'], ['Productos sin ganancia (no se tocan)', $sinMargen, 'text-slate-500']] as [$t, $n, $c])
             <div class="card px-4 py-3">
                 <div class="text-xs font-medium text-slate-500">{{ $t }}</div>
-                <div class="mt-1 text-2xl font-semibold {{ $c }}">{{ number_format($n, 0, ',', '.') }}</div>
+                <div class="mt-1 text-xl font-semibold sm:text-2xl {{ $c }}">{{ number_format($n, 0, ',', '.') }}</div>
             </div>
         @endforeach
     </div>
@@ -30,7 +30,7 @@
     <div class="card">
         <div class="card-body flex flex-wrap items-center justify-between gap-4">
             <p class="text-sm text-slate-600">Se arma la lista para revisar: nada cambia en Odoo hasta que toques <b>Actualizar en Odoo</b>. Solo se cambia el precio de venta, el costo no se toca.</p>
-            <button wire:click="crear" @disabled($productos === 0) class="btn-primary btn-lg">
+            <button wire:click="crear" @disabled($productos === 0) class="btn-primary btn-lg max-sm:w-full">
                 <x-icon name="zap" /> Calcular precios de venta
             </button>
         </div>

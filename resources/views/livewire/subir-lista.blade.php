@@ -4,13 +4,13 @@
 <div class="space-y-6" wire:init="cargarProveedores">
     <x-cargando target="archivo,procesar,sincronizar,traerDeWeb" />
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
+    <div class="flex flex-wrap items-end justify-between gap-3 sm:gap-4">
         <div>
             <h1 class="page-title">Cargar lista de precios</h1>
             <p class="page-subtitle">Subí la lista del proveedor en Excel o PDF. Antes de tocar Odoo vas a poder revisar cada precio.</p>
         </div>
-        <div class="flex items-center gap-3">
-            <div class="text-right text-xs text-slate-500">
+        <div class="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
+            <div class="text-xs text-slate-500 sm:text-right">
                 <div><span class="font-semibold text-slate-700">{{ number_format($catalogo, 0, ',', '.') }}</span> productos de Odoo</div>
                 @if($catalogoFecha)<div>Actualizado {{ \Illuminate\Support\Carbon::parse($catalogoFecha)->diffForHumans() }}</div>@endif
             </div>
@@ -71,7 +71,7 @@
 
     @if($leyendoIA)
         @php $pct = round($leyendoIA['hecho'] / max(1, $leyendoIA['total']) * 100); @endphp
-        <div class="card px-5 py-4">
+        <div class="card px-4 py-4 sm:px-5">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <div class="flex items-center gap-2 text-sm font-medium text-slate-900">
                     <x-icon name="loader" class="h-4 w-4 animate-spin text-brand-600" />
@@ -178,7 +178,30 @@
                     </div>
                     <span class="mt-1 block text-xs text-slate-500">Varios descuentos seguidos: 50+13</span>
                 </label>
+                @if(!empty($sysvent['USD']))
+                <label class="block">
+                    <span class="label">Cotización del dólar</span>
+                    <div class="relative">
+                        <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                        <input wire:model="cotizacionDolar" type="text" inputmode="decimal" placeholder="ej. 1450" class="input pl-7">
+                    </div>
+                    <span class="mt-1 block text-xs text-slate-500">{{ $sysvent['USD'] }} {{ $sysvent['USD'] === 1 ? 'producto está' : 'productos están' }} en dólares</span>
+                </label>
+                @endif
+                @if(!empty($sysvent['EUR']))
+                <label class="block">
+                    <span class="label">Cotización del euro</span>
+                    <div class="relative">
+                        <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                        <input wire:model="cotizacionEuro" type="text" inputmode="decimal" placeholder="ej. 1600" class="input pl-7">
+                    </div>
+                    <span class="mt-1 block text-xs text-slate-500">{{ $sysvent['EUR'] }} {{ $sysvent['EUR'] === 1 ? 'producto está' : 'productos están' }} en euros</span>
+                </label>
+                @endif
             </div>
+            @if(!empty($sysvent['USD']) || !empty($sysvent['EUR']))
+                <p class="text-xs text-slate-500">Si la dejás vacía, esos productos quedan sin marcar y la podés cargar después en la revisión.</p>
+            @endif
 
             <div class="space-y-3">
                 <label class="flex items-start gap-3 text-sm">
@@ -187,8 +210,8 @@
                 </label>
             </div>
         </div>
-        <div class="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 rounded-b-lg">
-            <button wire:click="procesar" class="btn-primary btn-lg">
+        <div class="flex justify-end border-t border-slate-200 bg-slate-50 px-4 py-4 rounded-b-lg sm:px-5">
+            <button wire:click="procesar" class="btn-primary btn-lg max-sm:w-full">
                 Revisar precios
                 <x-icon name="arrow-right" />
             </button>

@@ -20,8 +20,8 @@
     @endif
 
     <div class="card">
-        <div class="flex flex-wrap items-center gap-4 border-b border-slate-200 px-5 py-3">
-            <div class="relative min-w-[260px] flex-1">
+        <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 sm:gap-4 sm:px-5">
+            <div class="relative w-full sm:w-auto sm:min-w-[260px] sm:flex-1">
                 <x-icon name="search" class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input wire:model.live.debounce.400ms="buscar" type="text" placeholder="Buscar categoría" class="input pl-9">
             </div>
@@ -32,7 +32,7 @@
         </div>
 
         <div class="overflow-x-auto">
-            <table class="table">
+            <table class="table table-cards">
                 <thead>
                     <tr>
                         <th>Categoría</th>
@@ -45,18 +45,18 @@
                 <tbody>
                 @forelse($categorias as $c)
                     <tr wire:key="c-{{ $c->id }}">
-                        <td class="!align-middle font-medium text-slate-900">{{ $c->nombre }}</td>
-                        <td class="!align-middle text-right tabular-nums text-slate-500">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }}</td>
-                        <td class="!align-middle">
-                            <div class="relative mx-auto w-24">
+                        <td class="!align-middle font-medium text-slate-900">{{ $c->nombre }}<div class="text-xs font-normal text-slate-500 md:hidden">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }} productos</div></td>
+                        <td class="!align-middle text-right tabular-nums text-slate-500 max-md:!hidden">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }}</td>
+                        <td class="td-half !align-middle" data-label="Ganancia">
+                            <div class="relative mx-auto w-24 max-md:mx-0 max-md:w-full">
                                 <input type="text" inputmode="decimal" placeholder="—" value="{{ $pct($c->margen) }}"
                                        wire:change="guardar({{ $c->id }}, 'margen', $event.target.value)"
                                        class="input pr-7 text-center {{ $c->margen !== null ? '!border-brand-500 bg-brand-50/50' : '' }}">
                                 <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
                             </div>
                         </td>
-                        <td class="!align-middle">
-                            <div class="relative mx-auto w-24">
+                        <td class="td-half !align-middle" data-label="Descuento">
+                            <div class="relative mx-auto w-24 max-md:mx-0 max-md:w-full">
                                 <input type="text" inputmode="decimal" placeholder="ej. 50+13" title="Varios descuentos seguidos: 50+13" value="{{ $c->descuento_texto ?: $pct($c->descuento) }}"
                                        wire:change="guardar({{ $c->id }}, 'descuento', $event.target.value)"
                                        class="input pr-7 text-center {{ $c->descuento !== null ? '!border-brand-500 bg-brand-50/50' : '' }}">
@@ -67,7 +67,7 @@
                             @if($c->margen !== null && ($conteo[$c->id] ?? 0) > 0)
                                 <button wire:click="ajustar({{ $c->id }})"
                                         title="Recalcula el precio de venta de todos sus productos: costo actual + {{ $pct($c->margen) }}% (sin IVA). Lo revisás antes de enviarlo a Odoo."
-                                        class="btn-secondary px-3 py-1.5 text-xs">
+                                        class="btn-secondary px-3 py-1.5 text-xs max-md:w-full max-md:py-2">
                                     <x-icon name="zap" class="h-3.5 w-3.5" /> Ajustar a {{ $pct($c->margen) }}%
                                 </button>
                             @else

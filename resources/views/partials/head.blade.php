@@ -25,12 +25,12 @@
     }
     @layer components {
         .card { @apply bg-white border border-slate-200 rounded-lg shadow-sm; }
-        .card-header { @apply px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-4; }
+        .card-header { @apply px-4 py-3.5 sm:px-5 sm:py-4 border-b border-slate-200 flex items-center justify-between gap-4; }
         .card-title { @apply text-base font-semibold text-slate-900; }
-        .card-body { @apply p-5; }
+        .card-body { @apply p-4 sm:p-5; }
         .label { @apply block text-sm font-medium text-slate-700 mb-1.5; }
         .hint { @apply text-xs text-slate-500 mt-1; }
-        .input { @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 shadow-sm
+        .input { @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base sm:text-sm text-slate-900 placeholder-slate-400 shadow-sm
                         focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 disabled:bg-slate-50 disabled:text-slate-500; }
         .btn { @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition-colors
                       focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap; }
@@ -57,8 +57,27 @@
         .alert-success { @apply alert border-emerald-200 bg-emerald-50 text-emerald-800; }
         .alert-error { @apply alert border-red-200 bg-red-50 text-red-800; }
         .alert-info { @apply alert border-brand-100 bg-brand-50 text-brand-900; }
-        .page-title { @apply text-2xl font-semibold tracking-tight text-slate-900; }
+        .page-title { @apply text-xl sm:text-2xl font-semibold tracking-tight text-slate-900; }
         .page-subtitle { @apply mt-1 text-sm text-slate-500; }
+        .no-scrollbar { scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
         .step { @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm font-semibold text-brand-700 ring-1 ring-brand-600/20; }
+    }
+
+    /* En el celular las tablas con .table-cards se muestran como tarjetas.
+       td.td-half ocupa media fila, td.td-check va arriba a la derecha y data-label pone el título. */
+    @media (max-width: 767.98px) {
+        .table-cards { display: block; min-width: 0; }
+        .table-cards thead { display: none; }
+        .table-cards tbody { display: block; }
+        .table-cards tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; padding: 0.875rem 1rem; position: relative; }
+        .table-cards tbody td { display: block; grid-column: 1 / -1; text-align: left; max-width: none; white-space: normal; }
+        .table-cards tbody td:not([colspan]) { padding: 0 !important; }
+        .table-cards tbody td[colspan] { text-align: center; }
+        .table-cards tbody td.td-junto-check { padding-right: 2.25rem !important; }
+        .table-cards tbody td.td-separado { border-top: 1px dashed rgb(226 232 240); padding-top: 0.75rem !important; }
+        .table-cards tbody td.td-half { grid-column: span 1 / span 1; }
+        .table-cards tbody td.td-check { position: absolute; top: 0.875rem; right: 1rem; width: auto; }
+        .table-cards tbody td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 0.25rem; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em; color: rgb(100 116 139); }
     }
 </style>

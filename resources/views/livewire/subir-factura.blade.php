@@ -10,13 +10,13 @@
     <x-cargando target="nuevas,sincronizar" />
     <x-cargando target="procesar" texto="Leyendo la factura… puede tardar hasta un minuto" />
 
-    <div class="flex flex-wrap items-end justify-between gap-4">
+    <div class="flex flex-wrap items-end justify-between gap-3 sm:gap-4">
         <div>
             <h1 class="page-title">Cargar factura</h1>
             <p class="page-subtitle">Sacale una foto a la factura del proveedor o adjuntá la imagen o el PDF. Se actualiza el costo y se suma el stock; el precio de venta no se toca.</p>
         </div>
-        <div class="flex items-center gap-3">
-            <div class="text-right text-xs text-slate-500">
+        <div class="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
+            <div class="text-xs text-slate-500 sm:text-right">
                 <div><span class="font-semibold text-slate-700">{{ number_format($catalogo, 0, ',', '.') }}</span> productos de Odoo</div>
                 @if($catalogoFecha)<div>Actualizado {{ \Illuminate\Support\Carbon::parse($catalogoFecha)->diffForHumans() }}</div>@endif
             </div>
@@ -73,7 +73,7 @@
                 <div class="flex flex-wrap gap-3">
                     @foreach($fotos as $i => $f)
                         @php $esPdf = strtolower($f->getClientOriginalExtension()) === 'pdf'; @endphp
-                        <div wire:key="foto-{{ $i }}-{{ $f->getFilename() }}" class="relative h-32 w-24 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                        <div wire:key="foto-{{ $i }}-{{ $f->getFilename() }}" class="relative h-28 w-20 overflow-hidden sm:h-32 sm:w-24 rounded-md border border-slate-200 bg-slate-100">
                             @if($esPdf)
                                 <div class="flex h-full flex-col items-center justify-center gap-1 p-2 text-center">
                                     <x-icon name="file" class="h-6 w-6 text-slate-400" />
@@ -84,7 +84,7 @@
                             @endif
                             <span class="absolute left-1 top-1 rounded bg-slate-900/70 px-1.5 text-[11px] font-medium text-white">{{ $i + 1 }}</span>
                             <button type="button" wire:click="quitarFoto({{ $i }})" title="Quitar"
-                                    class="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-600 shadow hover:text-red-600">
+                                    class="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-slate-600 shadow hover:text-red-600">
                                 <x-icon name="x" class="h-3.5 w-3.5" />
                             </button>
                         </div>
@@ -132,19 +132,19 @@
             </label>
         </div>
         @php $agotado = $tope && $leidasMes >= $tope; @endphp
-        <div class="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-slate-200 bg-slate-50 px-5 py-4">
-            <div class="text-sm text-slate-600">
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-slate-200 bg-slate-50 px-4 py-4 sm:px-5">
+            <div class="w-full text-sm text-slate-600 sm:w-auto">
                 @if($tope)
                     Facturas leídas este mes:
                     <span class="font-semibold {{ $agotado ? 'text-red-600' : ($leidasMes >= $tope * 0.8 ? 'text-amber-600' : 'text-slate-900') }}">{{ $leidasMes }} / {{ $tope }}</span>
-                    <div class="mt-1 h-1.5 w-48 overflow-hidden rounded-full bg-slate-200">
+                    <div class="mt-1 h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-slate-200">
                         <div class="h-full rounded-full {{ $agotado ? 'bg-red-500' : ($leidasMes >= $tope * 0.8 ? 'bg-amber-500' : 'bg-brand-600') }}" style="width: {{ min(100, round($leidasMes / $tope * 100)) }}%"></div>
                     </div>
                 @else
                     Facturas leídas este mes: <span class="font-semibold text-slate-900">{{ $leidasMes }}</span>
                 @endif
             </div>
-            <button wire:click="procesar" @disabled(!$fotos || $agotado) class="btn-primary btn-lg">
+            <button wire:click="procesar" @disabled(!$fotos || $agotado) class="btn-primary btn-lg max-sm:w-full">
                 Leer factura
                 <x-icon name="arrow-right" />
             </button>
