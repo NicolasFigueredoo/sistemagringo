@@ -7,6 +7,10 @@ use App\Models\Categoria;
 use App\Models\OdooProducto;
 use App\Services\Matcher;
 use Livewire\Attributes\Layout;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -34,6 +38,46 @@ class Costos extends Component
     public function marcar(int $id, bool $revisado): void
     {
         OdooProducto::where('id', $id)->update(['costo_revisado_at' => $revisado ? now() : null]);
+    }
+
+    /** Productos sin costo cargado en Odoo (costo 0), según el último "Actualizar catálogo"; respeta la categoría elegida. */
+    private function sinCosto()
+    {
+        return OdooProducto::query()
+            ->where(fn ($q) => $q->whereNull('costo')->orWhere('costo', '<=', 0))
+            ->when($this->categoria !== '' && $this->categoria !== null, fn ($q) => $q->where('categ_id', (int) $this->categoria));
+    }
+
+    /** Excel con todos los productos sin costo, para completarlo. */
+    public function descargarSinCosto()
+    {
+        $cats = Categoria::pluck('nombre', 'id');
+        $libro = new Spreadsheet();
+        $hoja = $libro->getActiveSheet();
+        $hoja->setTitle('Sin costo');
+        $hoja->fromArray(['Producto', 'Referencia interna', 'Código de barras', 'Categoría', 'Precio de venta', 'Costo', 'ID Odoo'], null, 'A1');
+
+        $fila = 2;
+        foreach ($this->sinCosto()->orderBy('nombre')->cursor() as $p) {
+            $hoja->fromArray([$p->nombre, $p->default_code, null, $cats[$p->categ_id] ?? '', (float) $p->precio, null, $p->id], null, "A$fila");
+            // como texto: si no, Excel muestra "7,79E+12" y le saca los ceros de adelante
+            if ($p->barcode) $hoja->setCellValueExplicit("C$fila", $p->barcode, DataType::TYPE_STRING);
+            $fila++;
+        }
+
+        $hoja->getStyle('A1:G1')->getFont()->setBold(true);
+        $hoja->getStyle('A1:G1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('E2E8F0');
+        $hoja->getStyle("E2:E$fila")->getNumberFormat()->setFormatCode('#,##0.00');
+        $hoja->freezePane('A2');
+        $hoja->setAutoFilter('A1:G' . max(1, $fila - 1));
+        foreach (['A' => 60, 'B' => 20, 'C' => 18, 'D' => 35, 'E' => 15, 'F' => 12, 'G' => 10] as $col => $ancho) {
+            $hoja->getColumnDimension($col)->setWidth($ancho);
+        }
+
+        $nombre = 'productos-sin-costo-' . now()->format('Y-m-d') . '.xlsx';
+        return response()->streamDownload(function () use ($libro) {
+            (new Xlsx($libro))->save('php://output');
+        }, $nombre, ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
     }
 
     /** Productos con la fecha de su último costo (lista/factura aplicada o marcado a mano). */
@@ -100,6 +144,7 @@ class Costos extends Component
             'productos'  => $productos,
             'origen'     => $origen,
             'conteo'     => $conteo,
+            'sinCosto'   => $this->sinCosto()->count(),
             'categorias' => Categoria::whereIn('id', OdooProducto::select('categ_id')->distinct())->orderBy('nombre')->get(['id', 'nombre']),
         ]);
     }

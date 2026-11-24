@@ -9,9 +9,20 @@
     ];
 @endphp
 <div class="space-y-6">
-    <div>
-        <h1 class="page-title">Costos</h1>
-        <p class="page-subtitle">Qué productos ya tienen el costo actualizado por una lista o factura, y cuáles faltan.</p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+            <h1 class="page-title">Costos</h1>
+            <p class="page-subtitle">Qué productos ya tienen el costo actualizado por una lista o factura, y cuáles faltan.</p>
+        </div>
+        <div class="max-sm:w-full sm:text-right">
+            <button wire:click="descargarSinCosto" wire:loading.attr="disabled" wire:target="descargarSinCosto" @disabled(!$sinCosto)
+                    class="btn-secondary max-sm:w-full">
+                <x-icon name="download" />
+                <span wire:loading.remove wire:target="descargarSinCosto">Descargar Excel: productos sin costo ({{ number_format($sinCosto, 0, ',', '.') }})</span>
+                <span wire:loading wire:target="descargarSinCosto">Armando el Excel…</span>
+            </button>
+            <p class="mt-1 text-xs text-slate-500">Costo en 0 en Odoo{{ $categoria !== '' ? ', solo de la categoría elegida' : '' }}. Según el último "Actualizar catálogo".</p>
+        </div>
     </div>
 
     <div class="card px-4 py-4 sm:px-5">
