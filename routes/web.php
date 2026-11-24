@@ -4,7 +4,6 @@ use App\Http\Controllers\LoginController;
 use App\Livewire\Categorias;
 use App\Livewire\Costos;
 use App\Livewire\Historial;
-use App\Livewire\Reajustar;
 use App\Livewire\RevisarCarga;
 use App\Livewire\SubirFactura;
 use App\Livewire\SubirLista;
@@ -32,7 +31,6 @@ Route::middleware('auth')->group(function () {
     Route::get('/categorias', Categorias::class)->name('categorias');
     Route::get('/costos', Costos::class)->name('costos');
     Route::get('/historial', Historial::class)->name('historial');
-    Route::get('/reajustar', Reajustar::class)->name('reajustar');
 
     // Odoo viejo: solo facturas por foto, con su propia base (catálogo, proveedores, historial)
     Route::prefix('viejo')->name('viejo.')->middleware(OdooViejo::class)->group(function () {

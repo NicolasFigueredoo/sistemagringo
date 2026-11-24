@@ -44,10 +44,17 @@ class Instancia
     /** El otro Odoo está configurado (usuario y API key) y tiene su base local. */
     public static function hayOtro(): bool
     {
+        if (self::nuevoPausado()) return false;
         $c = self::configOtro();
         if (empty($c['user']) || empty($c['api_key'])) return false;
         $db = config('database.connections.' . self::conexionOtra() . '.database');
         return $db && is_file($db);
+    }
+
+    /** El sistema nuevo (pantallas /viejo, el otro Odoo) está en pausa: no se ve ni se usa. */
+    public static function nuevoPausado(): bool
+    {
+        return (bool) config('odoo.nuevo_pausado', true);
     }
 
     /** url, db, user, api_key y stock_location_id del otro Odoo. */

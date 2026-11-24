@@ -21,6 +21,10 @@ return [
         'nombre'  => env('ODOO_VIEJO_NOMBRE', 'Odoo nuevo'),
     ],
 
+    // Sistema nuevo en pausa (por defecto): no se muestran sus pantallas /viejo ni se toca ese Odoo desde las cargas.
+    // Para volver a usarlo: ODOO_NUEVO_PAUSADO=false en el .env
+    'nuevo_pausado' => (bool) env('ODOO_NUEVO_PAUSADO', true),
+
     // ruta al ejecutable pdftotext (poppler)
     'pdftotext' => env('PDFTOTEXT_PATH', 'pdftotext'),
 ];

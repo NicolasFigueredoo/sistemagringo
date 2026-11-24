@@ -32,7 +32,7 @@ class Carga extends Model
         return $this->tipo === 'factura';
     }
 
-    /** Lista o factura de un proveedor: solo actualiza el costo (y el stock); la venta se cambia con Reajustar */
+    /** Lista o factura de un proveedor: solo actualiza el costo (y el stock); la venta no se toca */
     public function getSoloCostoAttribute(): bool
     {
         return !$this->es_ajuste;

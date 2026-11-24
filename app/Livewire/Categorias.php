@@ -10,21 +10,15 @@ use App\Services\Procesador;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
 use Livewire\Component;
-use Livewire\WithPagination;
 
 #[Layout('layouts.app')]
 #[Title('Categorías')]
 class Categorias extends Component
 {
-    use WithPagination;
-
     public string $buscar = '';
     public bool $soloConValores = false;
     public ?string $mensaje = null;
     public ?string $error = null;
-
-    public function updatedBuscar(): void { $this->resetPage(); }
-    public function updatedSoloConValores(): void { $this->resetPage(); }
 
     /** $campo = margen | descuento. Vacío = usar el general. */
     public function guardar(int $id, string $campo, $valor): void
@@ -39,30 +33,6 @@ class Categorias extends Component
         $this->mensaje = 'Guardado.';
     }
 
-    /** Arma el ajuste de precios de la categoría (costo actual + su ganancia) y lo abre para revisar. */
-    public function ajustar(int $id)
-    {
-        $cat = Categoria::findOrFail($id);
-        if ($cat->margen === null) { $this->error = "Primero poné la ganancia % de \"{$cat->nombre}\"."; return; }
-
-        try {
-            [$carga, $salteados] = (new Procesador(OdooClient::desdeConfig()))->crearAjuste($cat);
-        } catch (\Throwable $e) {
-            report($e);
-            $this->error = 'No se pudo conectar con Odoo: ' . $e->getMessage();
-            return;
-        }
-
-        if ($carga->items()->count() === 0) {
-            $carga->delete();
-            $this->error = "Ningún producto de \"{$cat->nombre}\" tiene costo cargado en Odoo.";
-            return;
-        }
-        if ($salteados) {
-            session()->flash('aviso', "$salteados productos sin costo en Odoo no se incluyeron.");
-        }
-        return $this->redirectRoute('revisar', $carga, navigate: false);
-    }
 
     public function sincronizar(): void
     {
@@ -81,7 +51,8 @@ class Categorias extends Component
         if (trim($this->buscar) !== '') $q->where('nombre', 'like', '%' . trim($this->buscar) . '%');
         if ($this->soloConValores) $q->where(fn ($w) => $w->whereNotNull('margen')->orWhereNotNull('descuento'));
 
-        $cats = $q->paginate(40);
+        // todas en una sola página: son pocas y así se ven completas
+        $cats = $q->get();
         $conteo = OdooProducto::whereIn('categ_id', $cats->pluck('id'))
             ->selectRaw('categ_id, COUNT(*) as n')->groupBy('categ_id')->pluck('n', 'categ_id');
 

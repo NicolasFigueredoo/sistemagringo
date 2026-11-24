@@ -1,6 +1,6 @@
 @php $pct = fn($v) => $v === null ? '' : rtrim(rtrim(number_format((float) $v, 2, ',', ''), '0'), ','); @endphp
 <div class="space-y-6">
-    <x-cargando target="sincronizar,ajustar" texto="Consultando Odoo…" />
+    <x-cargando target="sincronizar" texto="Consultando Odoo…" />
 
     <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -29,6 +29,7 @@
                 <input wire:model.live="soloConValores" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
                 Solo con valores cargados
             </label>
+            <span class="text-sm text-slate-500 sm:ml-auto">{{ $categorias->count() }} {{ $categorias->count() === 1 ? 'categoría' : 'categorías' }}</span>
         </div>
 
         <div class="overflow-x-auto">
@@ -39,7 +40,6 @@
                         <th class="!text-right">Productos</th>
                         <th class="!text-center">Ganancia</th>
                         <th class="!text-center">Descuento</th>
-                        <th class="!text-right">Acción</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -63,25 +63,12 @@
                                 <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
                             </div>
                         </td>
-                        <td class="!align-middle text-right">
-                            @if($c->margen !== null && ($conteo[$c->id] ?? 0) > 0)
-                                <button wire:click="ajustar({{ $c->id }})"
-                                        title="Recalcula el precio de venta de todos sus productos: costo actual + {{ $pct($c->margen) }}% (sin IVA). Lo revisás antes de enviarlo a Odoo."
-                                        class="btn-secondary px-3 py-1.5 text-xs max-md:w-full max-md:py-2">
-                                    <x-icon name="zap" class="h-3.5 w-3.5" /> Ajustar a {{ $pct($c->margen) }}%
-                                </button>
-                            @else
-                                <span class="text-xs text-slate-400">{{ $c->margen === null ? 'Definí la ganancia' : 'Sin productos' }}</span>
-                            @endif
-                        </td>
                     </tr>
                 @empty
-                    <tr><td colspan="5" class="!py-12 text-center text-sm text-slate-500">No hay categorías. Sincronizá con Odoo para traerlas.</td></tr>
+                    <tr><td colspan="4" class="!py-12 text-center text-sm text-slate-500">No hay categorías. Sincronizá con Odoo para traerlas.</td></tr>
                 @endforelse
                 </tbody>
             </table>
         </div>
     </div>
-
-    {{ $categorias->links() }}
 </div>
