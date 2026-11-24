@@ -13,13 +13,16 @@
             ['viejo.historial', 'Historial', 'clock', ['viejo.historial']],
             ['subir', 'Volver', 'undo', []],
         ] : [
-            ['subir', 'Cargar lista', 'file', ['subir', 'subir.factura', 'revisar']],
+            ['subir', 'Cargar lista', 'file', ['subir', 'revisar']],
+            ['subir.factura', 'Cargar factura', 'camera', ['subir.factura']],
             ['costos', 'Costos', 'check', ['costos']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
         ];
-        // una sola carga actualiza los dos Odoo (en pausa mientras no se use el sistema nuevo)
-        if (!$viejo && !\App\Support\Instancia::nuevoPausado()) $nav[] = ['viejo.subir.factura', 'Cargar factura nuevo y viejo', 'camera', []];
+        // con el sistema nuevo activo, la factura se carga en los dos Odoo a la vez
+        if (!$viejo && !\App\Support\Instancia::nuevoPausado()) {
+            $nav[1] = ['viejo.subir.factura', 'Cargar factura nuevo y viejo', 'camera', []];
+        }
     @endphp
     <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur" x-data="{ menu: false }" @keydown.escape.window="menu = false">
         <div class="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 xl:gap-6">
