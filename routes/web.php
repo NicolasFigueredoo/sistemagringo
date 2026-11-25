@@ -4,6 +4,7 @@ use App\Http\Controllers\LoginController;
 use App\Livewire\Categorias;
 use App\Livewire\Costos;
 use App\Livewire\Historial;
+use App\Livewire\Odoos;
 use App\Livewire\RevisarCarga;
 use App\Livewire\SubirFactura;
 use App\Livewire\SubirLista;
@@ -31,6 +32,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/categorias', Categorias::class)->name('categorias');
     Route::get('/costos', Costos::class)->name('costos');
     Route::get('/historial', Historial::class)->name('historial');
+    // Odoo viejo → Odoo nuevo: sincronizar todo, comparar categorías, aplicar % de venta
+    Route::get('/odoos', Odoos::class)->name('odoos');
 
     // Odoo viejo: solo facturas por foto, con su propia base (catálogo, proveedores, historial)
     Route::prefix('viejo')->name('viejo.')->middleware(OdooViejo::class)->group(function () {

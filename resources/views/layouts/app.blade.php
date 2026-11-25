@@ -18,6 +18,7 @@
             ['costos', 'Costos', 'check', ['costos']],
             ['categorias', 'Categorías', 'folder', ['categorias']],
             ['historial', 'Historial', 'clock', ['historial']],
+            ['odoos', 'Viejo → Nuevo', 'database', ['odoos']],
         ];
         // con el sistema nuevo activo, la factura se carga en los dos Odoo a la vez
         if (!$viejo && !\App\Support\Instancia::nuevoPausado()) {

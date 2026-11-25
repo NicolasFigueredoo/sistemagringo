@@ -108,6 +108,68 @@ class OdooClient
         return $this->call($model, 'search_read', [$domain], $kw);
     }
 
+    /**
+     * Todos los registros que cumplen el dominio, leídos de a páginas en paralelo (mucho más rápido que de a una).
+     */
+    public function searchReadTodo(string $model, array $domain, array $fields, int $lote = 2000, int $paralelo = 4, array $context = []): array
+    {
+        $kw = $context ? ['context' => $context] : [];
+        $total = (int) $this->call($model, 'search_count', [$domain], $kw);
+        if ($total === 0) return [];
+        $paginas = array_map(fn ($o) => [[$domain], ['fields' => $fields, 'offset' => $o, 'limit' => $lote, 'order' => 'id'] + $kw], range(0, $total - 1, $lote));
+        $filas = [];
+        foreach ($this->callMany($model, 'search_read', $paginas, $paralelo) as $r) {
+            if ($r instanceof \Throwable) throw $r;
+            array_push($filas, ...$r);
+        }
+        return $filas;
+    }
+
+    /**
+     * Muchas llamadas al mismo método a la vez, de a $paralelo pedidos simultáneos.
+     * @param array<int|string,array{0:array,1?:array}> $llamadas clave => [args, kwargs]
+     * @return array<int|string,mixed> clave => resultado, o el error (Throwable) si esa llamada falló
+     */
+    public function callMany(string $model, string $method, array $llamadas, int $paralelo = 6): array
+    {
+        $uid = $this->uid();
+        $salida = [];
+        foreach (array_chunk($llamadas, $paralelo, true) as $lote) {
+            $resp = Http::pool(fn (Pool $pool) => array_map(
+                fn ($k) => $pool->as((string) $k)->timeout(300)->post($this->url . '/jsonrpc', $this->payload('object', 'execute_kw', [
+                    $this->db, $uid, $this->apiKey, $model, $method, $lote[$k][0], (object) ($lote[$k][1] ?? []),
+                ])),
+                array_keys($lote)
+            ));
+            foreach (array_keys($lote) as $k) {
+                try {
+                    $r = $resp[(string) $k] ?? null;
+                    if ($r instanceof \Throwable) throw $r;
+                    if (!$r) throw new RuntimeException('Sin respuesta de Odoo');
+                    $salida[$k] = $this->resultado($r->throw()->json());
+                } catch (\Throwable $e) {
+                    $salida[$k] = $e;
+                }
+            }
+        }
+        return $salida;
+    }
+
+    /** Crea varios registros en una sola llamada. Devuelve los ids en el mismo orden. */
+    public function crear(string $model, array $valores, array $kwargs = []): array
+    {
+        if (!$valores) return [];
+        $ids = $this->call($model, 'create', [array_values($valores)], $kwargs);
+        return array_map('intval', is_array($ids) ? $ids : [$ids]);
+    }
+
+    /** Nombres de los campos que existen en el modelo (entre los pedidos). */
+    public function camposExistentes(string $model, array $campos): array
+    {
+        $f = $this->call($model, 'fields_get', [$campos], ['attributes' => ['type']]);
+        return array_values(array_filter($campos, fn ($c) => isset($f[$c])));
+    }
+
     public function read(string $model, array $ids, array $fields): array
     {
         return $ids ? $this->call($model, 'read', [array_values($ids)], ['fields' => $fields]) : [];
@@ -170,25 +232,10 @@ class OdooClient
      */
     public function writeMany(string $model, array $escrituras, int $paralelo = 6): array
     {
-        $uid = $this->uid();
+        $llamadas = array_map(fn ($e) => [[array_values($e[0]), $e[1]]], $escrituras);
         $errores = [];
-        foreach (array_chunk($escrituras, $paralelo, true) as $lote) {
-            $resp = Http::pool(fn (Pool $pool) => array_map(
-                fn ($k) => $pool->as((string) $k)->timeout(120)->post($this->url . '/jsonrpc', $this->payload('object', 'execute_kw', [
-                    $this->db, $uid, $this->apiKey, $model, 'write', [array_values($lote[$k][0]), $lote[$k][1]], (object) [],
-                ])),
-                array_keys($lote)
-            ));
-            foreach (array_keys($lote) as $k) {
-                try {
-                    $r = $resp[(string) $k] ?? null;
-                    if ($r instanceof \Throwable) throw $r;
-                    if (!$r) throw new RuntimeException('Sin respuesta de Odoo');
-                    $this->resultado($r->throw()->json());
-                } catch (\Throwable $e) {
-                    $errores[$k] = $e->getMessage();
-                }
-            }
+        foreach ($this->callMany($model, 'write', $llamadas, $paralelo) as $k => $r) {
+            if ($r instanceof \Throwable) $errores[$k] = $r->getMessage();
         }
         return $errores;
     }

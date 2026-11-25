@@ -41,6 +41,26 @@ class Instancia
         return self::$original['odoo'] ?? config('odoo');
     }
 
+    /** Conexión del Odoo del sistema principal (el que en pantalla figura como "Odoo viejo"). */
+    public static function configPrincipal(): array
+    {
+        $o = self::base();
+        unset($o['viejo']);
+        return $o;
+    }
+
+    /** Conexión del Odoo de las pantallas /viejo (el que en pantalla figura como "Odoo nuevo"). */
+    public static function configSecundario(): array
+    {
+        return self::base()['viejo'] + ['stock_location_id' => null];
+    }
+
+    /** Base local del sistema principal (la del Odoo secundario es siempre "sqlite_viejo"). */
+    public static function conexionPrincipal(): string
+    {
+        return self::$original['db'] ?? config('database.principal') ?? config('database.default');
+    }
+
     /** El otro Odoo está configurado (usuario y API key) y tiene su base local. */
     public static function hayOtro(): bool
     {
