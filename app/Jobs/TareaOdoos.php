@@ -28,6 +28,11 @@ class TareaOdoos implements ShouldQueue
     {
         // el proceso de la cola atiende a los dos Odoo: se parte siempre de la configuración principal
         Instancia::usar(false);
+        // en el hosting corre dentro del pedido web: que no la corte el navegador ni el tiempo máximo
+        ignore_user_abort(true);
+        @set_time_limit(0);
+        @ini_set('memory_limit', '1024M');
+        Progreso::avance('Arrancando…');
         $avance = fn (string $paso, int $hechos, int $total) => Progreso::avance($paso, $hechos, $total);
         try {
             $resumen = match ($this->tipo) {

@@ -70,7 +70,7 @@
                     @endif
                     @if($sinProceso)
                         <div class="alert-error mt-3"><x-icon name="alert" class="mt-0.5 h-4 w-4 shrink-0" />
-                            <span>El proceso de fondo no está tomando la tarea. Cerrá el sistema y abrilo de nuevo con <b>iniciar.bat</b> (abre la ventana “Tio Gringo - tareas”).</span>
+                            <span>La tarea no arranca. Revisá que PHP pueda ejecutarse desde la línea de comandos; el detalle queda en <b>storage/logs/tareas.log</b>.</span>
                         </div>
                     @endif
 

@@ -12,13 +12,18 @@ class Progreso
 {
     private const CLAVE = 'odoos-tarea';
     /** Sin novedades en este tiempo, se da por cortada (el proceso de fondo se cerró). */
-    private const VENCE = 600;
+    private const VENCE = 360;
 
     private static float $ultimaEscritura = 0;
 
     public static function actual(): ?array
     {
-        return Cache::get(self::CLAVE);
+        $t = Cache::get(self::CLAVE);
+        // sin novedades hace rato: el hosting cortó el proceso. Se muestra como error (se puede volver a tocar el botón).
+        if ($t && in_array($t['estado'], ['en_cola', 'corriendo'], true) && time() - ($t['actualizado'] ?? 0) >= self::VENCE) {
+            $t = array_merge($t, ['estado' => 'error', 'error' => 'Se cortó sin terminar (el servidor cortó el proceso). Lo que ya se hizo quedó hecho: tocá el botón de nuevo y sigue desde ahí.']);
+        }
+        return $t;
     }
 
     public static function enCurso(): bool
@@ -64,6 +69,39 @@ class Progreso
         Cache::forever(self::CLAVE, array_merge(self::actual() ?? [], [
             'estado' => 'error', 'error' => $mensaje, 'fin' => time(), 'actualizado' => time(),
         ]));
+    }
+
+    /**
+     * Arranca un proceso de fondo que atiende la cola y se cierra solo al vaciarla.
+     * Así la tarea corre aunque la ventana "Tio Gringo - tareas" no esté abierta (si está, no molesta: una sola la toma).
+     * Como mucho uno cada 30 segundos.
+     */
+    public static function lanzarProceso(): void
+    {
+        if (!Cache::add('odoos-proceso-lanzado', time(), 30)) return;
+        $php = self::php();
+        $artisan = base_path('artisan');
+        $log = storage_path('logs/tareas.log');
+        $args = 'queue:work --stop-when-empty --timeout=3600 --tries=1 --sleep=1';
+        try {
+            if (!function_exists('popen') || !function_exists('exec')) return;
+            if (PHP_OS_FAMILY === 'Windows') {
+                pclose(popen("start \"\" /B \"$php\" \"$artisan\" $args >> \"$log\" 2>&1", 'r'));
+            } else {
+                exec(sprintf('nohup %s %s %s >> %s 2>&1 &', escapeshellarg($php), escapeshellarg($artisan), $args, escapeshellarg($log)));
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /** php.exe de la línea de comandos (si el sitio corre con php-cgi, el que está al lado). */
+    private static function php(): string
+    {
+        $bin = PHP_BINARY ?: 'php';
+        if (!str_contains(strtolower(basename($bin)), 'cgi') && !str_contains(strtolower(basename($bin)), 'fpm')) return $bin;
+        $cli = dirname($bin) . DIRECTORY_SEPARATOR . (PHP_OS_FAMILY === 'Windows' ? 'php.exe' : 'php');
+        return is_file($cli) ? $cli : 'php';
     }
 
     public static function descartar(): void

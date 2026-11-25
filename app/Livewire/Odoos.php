@@ -49,7 +49,22 @@ class Odoos extends Component
             $this->error = 'Ya hay una tarea en curso: esperá a que termine.';
             return;
         }
-        TareaOdoos::dispatch('sincronizar');
+        self::correr(new TareaOdoos('sincronizar'));
+    }
+
+    /**
+     * En el hosting (Hostinger) no hay proceso de cola: la tarea corre en este mismo pedido, apenas se le
+     * contesta al navegador (litespeed/fastcgi_finish_request), y la pantalla sigue el avance con otros pedidos.
+     * En la PC (php -S atiende de a un pedido) va a la cola y se arranca el proceso de fondo.
+     */
+    private static function correr(TareaOdoos $tarea): void
+    {
+        if (PHP_SAPI === 'cli-server') {
+            dispatch($tarea);
+            Progreso::lanzarProceso();
+            return;
+        }
+        dispatch($tarea)->afterResponse();
     }
 
     /** Aplica el % de una categoría ($id) o de todas las que tienen un % escrito. */
@@ -82,7 +97,7 @@ class Odoos extends Component
             $this->error = 'Ya hay una tarea en curso: esperá a que termine.';
             return;
         }
-        TareaOdoos::dispatch('porcentaje', ['porcentajes' => $porcentajes, 'destinos' => $destinos, 'redondeo' => in_array($this->redondeo, [0, 10, 50, 100], true) ? $this->redondeo : 0]);
+        self::correr(new TareaOdoos('porcentaje', ['porcentajes' => $porcentajes, 'destinos' => $destinos, 'redondeo' => in_array($this->redondeo, [0, 10, 50, 100], true) ? $this->redondeo : 0]));
     }
 
     /** Vuelve a leer categorías y productos de los dos Odoo (solo lectura, en paralelo). */
@@ -180,7 +195,10 @@ class Odoos extends Component
         $tarea = Progreso::actual();
         $enCurso = Progreso::enCurso();
         // en cola hace rato y nadie la tomó: el proceso de fondo no está corriendo
-        $sinProceso = $tarea && $tarea['estado'] === 'en_cola' && time() - $tarea['inicio'] > 15;
+        $esperando = $tarea && $enCurso && $tarea['estado'] === 'en_cola' ? time() - $tarea['inicio'] : 0;
+        // sigue en cola: se vuelve a arrancar el proceso (por si el anterior no pudo)
+        if ($esperando > 8 && PHP_SAPI === 'cli-server') Progreso::lanzarProceso();
+        $sinProceso = $esperando > 75;
 
         return view('livewire.odoos', compact('filas', 'stats', 'conPct', 'tarea', 'enCurso', 'sinProceso'));
     }
