@@ -42,8 +42,20 @@ class TareaOdoos implements ShouldQueue
             Progreso::terminar($resumen);
         } catch (\Throwable $e) {
             report($e);
-            Progreso::fallo($e->getMessage());
+            Progreso::fallo(self::mensaje($e));
         }
+    }
+
+    /** Error legible: sin el HTML de las páginas de error de Odoo. */
+    private static function mensaje(\Throwable $e): string
+    {
+        $m = $e->getMessage();
+        if (str_contains($m, '429')) {
+            return 'Odoo.com frenó los pedidos por exceso de velocidad (error 429) y no se liberó después de varios reintentos. '
+                . 'Lo que ya se hizo quedó hecho: esperá unos minutos y tocá el botón de nuevo, sigue desde ahí.';
+        }
+        $m = trim(preg_replace('/\s+/', ' ', strip_tags(preg_replace('#<(style|script|head)\b.*?</\1>#is', ' ', $m))));
+        return mb_substr($m, 0, 400);
     }
 
     /** Si el proceso se corta (tiempo máximo, memoria), que la pantalla no quede esperando. */

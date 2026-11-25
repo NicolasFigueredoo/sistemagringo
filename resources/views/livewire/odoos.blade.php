@@ -142,25 +142,28 @@
         @endif
     </div>
 
-    {{-- Resumen de los dos Odoo --}}
+    {{-- Resumen de los dos Odoo: cada tarjeta abre su lista --}}
     <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
         @foreach([
-            ['Odoo viejo', $stats['cats_viejo'], $stats['prods_viejo'], 'bg-slate-900', $hostViejo],
-            ['Odoo nuevo', $stats['cats_nuevo'], $stats['prods_nuevo'], 'bg-brand-600', $hostNuevo],
-        ] as [$t, $c, $p, $dot, $h])
-            <div class="card px-4 py-3.5">
+            ['viejo', 'Odoo viejo', $stats['cats_viejo'], $stats['prods_viejo'], 'bg-slate-900', $hostViejo],
+            ['nuevo', 'Odoo nuevo', $stats['cats_nuevo'], $stats['prods_nuevo'], 'bg-brand-600', $hostNuevo],
+        ] as [$lado, $t, $c, $p, $dot, $h])
+            <button wire:click="$set('filtro', '{{ $lado }}')" class="card px-4 py-3.5 text-left transition hover:border-slate-300 {{ $filtro === $lado ? '!border-brand-500 ring-1 ring-brand-500' : '' }}">
                 <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><span class="dot {{ $dot }}"></span>{{ $t }}</div>
                 <div class="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{{ $n($c) }} <span class="text-sm font-normal text-slate-500">categorías</span></div>
                 <div class="text-sm tabular-nums text-slate-500">{{ $n($p) }} productos</div>
-                <div class="mt-1 truncate text-xs text-slate-400">{{ $h }}</div>
-            </div>
+                <div class="mt-1 truncate text-xs text-slate-400" title="{{ $h }}">{{ $h }}</div>
+                <div class="truncate text-xs {{ $leidas[$lado] && $leidas[$lado]->gt(now()->subDay()) ? 'text-slate-400' : 'text-amber-600' }}">
+                    {{ $leidas[$lado] ? 'Leído ' . $leidas[$lado]->locale('es')->diffForHumans() : 'Sin leer todavía' }}
+                </div>
+            </button>
         @endforeach
-        <button wire:click="$set('filtro', 'viejo')" class="card px-4 py-3.5 text-left transition hover:border-amber-300">
-            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Solo en el viejo</div>
+        <button wire:click="$set('filtro', 'faltan')" class="card px-4 py-3.5 text-left transition hover:border-amber-300 {{ $filtro === 'faltan' ? '!border-amber-500 ring-1 ring-amber-500' : '' }}">
+            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Faltan en el nuevo</div>
             <div class="mt-1.5 text-2xl font-semibold tabular-nums {{ $stats['solo_viejo'] ? 'text-amber-600' : 'text-slate-900' }}">{{ $n($stats['solo_viejo']) }}</div>
-            <div class="text-sm text-slate-500">{{ $stats['solo_viejo'] ? 'faltan en el nuevo' : 'nada pendiente' }}</div>
+            <div class="text-sm text-slate-500">{{ $stats['solo_viejo'] ? 'se crean al sincronizar' : 'nada pendiente' }}</div>
         </button>
-        <button wire:click="$set('filtro', 'nuevo')" class="card px-4 py-3.5 text-left transition hover:border-brand-300">
+        <button wire:click="$set('filtro', 'sobran')" class="card px-4 py-3.5 text-left transition hover:border-slate-300 {{ $filtro === 'sobran' ? '!border-brand-500 ring-1 ring-brand-500' : '' }}">
             <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Solo en el nuevo</div>
             <div class="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{{ $n($stats['solo_nuevo']) }}</div>
             <div class="text-sm text-slate-500">no están en el viejo</div>
@@ -202,18 +205,27 @@
             </button>
         </div>
 
-        {{-- Filtros --}}
+        {{-- Pestañas: qué lista se ve --}}
+        <div class="no-scrollbar flex gap-1 overflow-x-auto border-b border-slate-200 px-2 sm:px-3">
+            @foreach($pestanias as $v => $t)
+                <button type="button" wire:click="$set('filtro', '{{ $v }}')"
+                        class="-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition {{ $filtro === $v ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800' }}">
+                    {{ $t }}
+                    <span class="rounded-full px-2 py-0.5 text-xs tabular-nums {{ $filtro === $v ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-500' }}">{{ $n($cuentas[$v]) }}</span>
+                </button>
+            @endforeach
+        </div>
+
+        {{-- Búsqueda --}}
         <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
             <div class="relative w-full sm:w-auto sm:min-w-[240px] sm:flex-1">
                 <x-icon name="search" class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input wire:model.live.debounce.300ms="buscar" type="text" placeholder="Buscar categoría" class="input pl-9">
             </div>
-            <div class="no-scrollbar inline-flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-1">
-                @foreach(['todas' => 'Todas', 'ambos' => 'En los dos', 'viejo' => 'Solo viejo', 'nuevo' => 'Solo nuevo'] as $v => $t)
-                    <button type="button" wire:click="$set('filtro', '{{ $v }}')" class="whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition {{ $segmento($filtro === $v) }}">{{ $t }}</button>
-                @endforeach
-            </div>
-            <span class="text-sm text-slate-500 sm:ml-auto">{{ count($filas) }} {{ count($filas) === 1 ? 'categoría' : 'categorías' }}</span>
+            <label class="flex items-center gap-2 text-sm text-slate-600">
+                <input wire:model.live="soloConProductos" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                Ocultar las que no tienen productos
+            </label>
         </div>
 
         <div class="overflow-x-auto">
@@ -241,14 +253,14 @@
                         </td>
                         <td class="td-half !align-middle text-right tabular-nums max-md:!text-left" data-label="Viejo">
                             @if($f['viejo'])
-                                <span class="text-slate-700">{{ $n($f['viejo']['n']) }}</span>
+                                <span class="{{ $f['viejo']['n'] ? 'text-slate-700' : 'text-slate-400' }}">{{ $f['viejo']['n'] ? $n($f['viejo']['n']) : '0 · vacía' }}</span>
                             @else
                                 <span class="badge-gray">No está</span>
                             @endif
                         </td>
                         <td class="td-half !align-middle text-right tabular-nums max-md:!text-left" data-label="Nuevo">
                             @if($f['nuevo'])
-                                <span class="text-slate-700">{{ $n($f['nuevo']['n']) }}</span>
+                                <span class="{{ $f['nuevo']['n'] ? 'text-slate-700' : 'text-slate-400' }}">{{ $f['nuevo']['n'] ? $n($f['nuevo']['n']) : '0 · vacía' }}</span>
                             @else
                                 <span class="badge-yellow">Falta</span>
                             @endif
@@ -269,7 +281,7 @@
                     </tr>
                 @empty
                     <tr><td colspan="5" class="!py-14 text-center text-sm text-slate-500">
-                        @if($buscar !== '' || $filtro !== 'todas')
+                        @if($buscar !== '' || $filtro !== 'todas' || $soloConProductos)
                             No hay categorías con ese filtro.
                         @else
                             No hay categorías todavía. Tocá <b>Actualizar listas</b> para traerlas de los dos Odoo.

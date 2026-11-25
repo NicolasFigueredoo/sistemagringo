@@ -207,9 +207,9 @@ class SincronizarOdoos
 
         $creados = [];
         $hechos = 0;
-        // de a 4 lotes simultáneos
-        foreach (array_chunk($lotes, 4, true) as $grupo) {
-            $res = $this->nuevo->callMany('product.product', 'create', array_map(fn ($l) => [[$l[1]]], $grupo), 4);
+        // de a 2 lotes simultáneos (Odoo.com frena si se le mandan muchos pedidos a la vez)
+        foreach (array_chunk($lotes, 2, true) as $grupo) {
+            $res = $this->nuevo->callMany('product.product', 'create', array_map(fn ($l) => [[$l[1]]], $grupo), 2);
             foreach ($grupo as $i => [$lote, $valores]) {
                 $ids = $res[$i];
                 // si el lote entero falla (un código de barras repetido, por ejemplo) se crean de a uno para salvar el resto
@@ -271,7 +271,7 @@ class SincronizarOdoos
     /** Nombre, códigos, costo, venta y categoría del viejo en los productos que ya estaban en el nuevo. */
     private function actualizar(array $pv, array $pn, array $pares, array $creados, array $mapCat): void
     {
-        $grupos = [];   // mismos cambios => se escriben juntos en una sola llamada
+        $cambiosPorId = [];
         foreach ($pares as $vid => $nid) {
             if (isset($creados[$nid])) continue;
             $v = $pv[$vid];
@@ -297,28 +297,16 @@ class SincronizarOdoos
             }
 
             if (!$cambios) { $this->resumen['sin_cambios']++; continue; }
-            ksort($cambios);
-            $k = md5(json_encode($cambios));
-            $grupos[$k] ??= [[], $cambios];
-            $grupos[$k][0][] = $nid;
+            $cambiosPorId[$nid] = $cambios;
         }
 
-        $total = array_sum(array_map(fn ($g) => count($g[0]), $grupos));
-        $hechos = 0;
-        $this->paso('Actualizando costo, venta y categoría', 0, $total);
-        foreach (array_chunk($grupos, 60, true) as $tanda) {
-            $fallas = $this->nuevo->writeMany('product.product', $tanda, 8);
-            foreach ($tanda as $k => [$ids]) {
-                $hechos += count($ids);
-                if (isset($fallas[$k])) {
-                    $this->resumen['errores'] += count($ids) - 1;   // error() suma el que falta
-                    $this->error('Al actualizar ' . count($ids) . ' producto(s) (id ' . implode(', ', array_slice($ids, 0, 5)) . '): ' . $fallas[$k]);
-                } else {
-                    $this->resumen['productos_actualizados'] += count($ids);
-                }
-            }
-            $this->paso('Actualizando costo, venta y categoría', $hechos, $total);
-        }
+        // de a 200 productos por llamada (importación de Odoo): pocas llamadas, sin pasarse del límite de Odoo.com
+        $total = count($cambiosPorId);
+        $paso = 'Actualizando nombre, códigos, costo, venta y categoría';
+        $this->paso($paso, 0, $total);
+        $fallas = $this->nuevo->escribirVarios('product.product', $cambiosPorId, 200, fn ($h) => $this->paso($paso, $h, $total));
+        foreach ($fallas as $nid => $e) $this->error('Al actualizar «' . ($pn[$nid]['name'] ?? $nid) . '»: ' . $e);
+        $this->resumen['productos_actualizados'] += $total - count($fallas);
     }
 
     // ---------------------------------------------------------------- stock
@@ -371,12 +359,12 @@ class SincronizarOdoos
         $ctx = ['context' => ['inventory_mode' => true]];
         $lotes = array_chunk($objetivo, self::LOTE_STOCK, true);
         $hechos = 0;
-        foreach (array_chunk($lotes, 3, true) as $grupo) {
+        foreach (array_chunk($lotes, 2, true) as $grupo) {
             $llamadas = array_map(fn ($lote) => [[array_map(
                 fn ($nid) => ['product_id' => $nid, 'location_id' => $loc, 'inventory_quantity_auto_apply' => $lote[$nid]],
                 array_keys($lote)
             )], $ctx], $grupo);
-            foreach ($this->nuevo->callMany('stock.quant', 'create', $llamadas, 3) as $i => $r) {
+            foreach ($this->nuevo->callMany('stock.quant', 'create', $llamadas, 2) as $i => $r) {
                 if (!$r instanceof \Throwable) {
                     $this->resumen['stock_ajustado'] += count($grupo[$i]);
                     continue;

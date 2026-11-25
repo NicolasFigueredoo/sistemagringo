@@ -60,34 +60,24 @@ class PorcentajeVenta
 
         // precio de venta en la plantilla (es el que se ve en Odoo); standard_price de la plantilla = costo de su variante
         $plantillas = $odoo->searchReadTodo('product.template', [['categ_id', 'in', array_keys($pctPorCateg)]], ['id', 'standard_price', 'list_price', 'categ_id']);
-        $porPrecio = [];   // mismo precio nuevo => una sola escritura
+        $precios = [];   // id de plantilla => precio nuevo
         foreach ($plantillas as $t) {
             $costo = round((float) $t['standard_price'], 2);
             if ($costo <= 0) { $r['sin_costo']++; continue; }
             $precio = Precios::venta($costo, $pctPorCateg[$t['categ_id'][0]], false, $redondeo);
             if (abs($precio - (float) $t['list_price']) < 0.005) { $r['iguales']++; continue; }
-            $porPrecio[number_format($precio, 2, '.', '')][] = $t['id'];
+            $precios[$t['id']] = $precio;
         }
 
-        $total = array_sum(array_map('count', $porPrecio));
-        $hechos = 0;
-        $listos = [];
+        // de a 300 por llamada (importación de Odoo): rápido y sin pasarse del límite de Odoo.com
+        $total = count($precios);
         $this->paso("$nombre: escribiendo precios de venta", 0, $total);
-        foreach (array_chunk($porPrecio, 80, true) as $tanda) {
-            $fallas = $odoo->writeMany('product.template', array_map(fn ($ids, $p) => [$ids, ['list_price' => (float) $p]], $tanda, array_keys($tanda)), 8);
-            $i = 0;
-            foreach ($tanda as $precio => $ids) {
-                $hechos += count($ids);
-                if (isset($fallas[$i])) {
-                    $r['errores'][] = count($ids) . ' producto(s) a $' . $precio . ': ' . mb_substr($fallas[$i], 0, 300);
-                } else {
-                    $r['modificados'] += count($ids);
-                    $listos[$precio] = $ids;
-                }
-                $i++;
-            }
-            $this->paso("$nombre: escribiendo precios de venta", $hechos, $total);
-        }
+        $fallas = $odoo->escribirVarios('product.template', array_map(fn ($p) => ['list_price' => (float) $p], $precios), 300,
+            fn ($h) => $this->paso("$nombre: escribiendo precios de venta", $h, $total));
+        foreach (array_slice($fallas, 0, 30, true) as $id => $e) $r['errores'][] = "Producto $id: " . mb_substr($e, 0, 300);
+        $r['modificados'] = $total - count($fallas);
+        $listos = [];
+        foreach (array_diff_key($precios, $fallas) as $id => $p) $listos[number_format($p, 2, '.', '')][] = $id;
 
         // base local: el precio nuevo y el % como ganancia de la categoría
         $db = DB::connection($conexion);

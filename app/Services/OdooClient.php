@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -13,6 +16,9 @@ use RuntimeException;
 class OdooClient
 {
     private ?int $uid = null;
+
+    /** Veces que se reintenta un pedido que Odoo frenó (429 = demasiados pedidos) o que no llegó. */
+    private const REINTENTOS = 8;
 
     public function __construct(
         private string $url,
@@ -69,8 +75,27 @@ class OdooClient
 
     private function rpc(string $service, string $method, array $args): mixed
     {
-        $r = Http::timeout(120)->retry(2, 1000)->post($this->url . '/jsonrpc', $this->payload($service, $method, $args))->throw()->json();
+        $r = Http::timeout(120)
+            ->retry(self::REINTENTOS, fn ($intento, $e) => self::espera($intento, $e), fn ($e) => self::esFreno($e))
+            ->post($this->url . '/jsonrpc', $this->payload($service, $method, $args))->throw()->json();
         return $this->resultado($r);
+    }
+
+    /** Odoo frenó el pedido por exceso (429), está saturado (502-504) o no hubo conexión: conviene esperar y reintentar. */
+    private static function esFreno($r): bool
+    {
+        if ($r instanceof RequestException) $r = $r->response;
+        if ($r instanceof Response) return in_array($r->status(), [429, 502, 503, 504], true);
+        return $r instanceof ConnectionException;
+    }
+
+    /** Milisegundos a esperar: lo que pide Odoo (Retry-After) o 2, 4, 8… segundos, hasta 60. */
+    private static function espera(int $intento, $r): int
+    {
+        if ($r instanceof RequestException) $r = $r->response;
+        $pide = $r instanceof Response ? $r->header('Retry-After') : null;
+        $seg = is_numeric($pide) ? (int) $pide : min(60, 2 ** $intento);
+        return max(1, $seg) * 1000 + random_int(0, 700);
     }
 
     private function resultado(?array $r): mixed
@@ -111,7 +136,7 @@ class OdooClient
     /**
      * Todos los registros que cumplen el dominio, leídos de a páginas en paralelo (mucho más rápido que de a una).
      */
-    public function searchReadTodo(string $model, array $domain, array $fields, int $lote = 2000, int $paralelo = 4, array $context = []): array
+    public function searchReadTodo(string $model, array $domain, array $fields, int $lote = 2000, int $paralelo = 2, array $context = []): array
     {
         $kw = $context ? ['context' => $context] : [];
         $total = (int) $this->call($model, 'search_count', [$domain], $kw);
@@ -130,20 +155,32 @@ class OdooClient
      * @param array<int|string,array{0:array,1?:array}> $llamadas clave => [args, kwargs]
      * @return array<int|string,mixed> clave => resultado, o el error (Throwable) si esa llamada falló
      */
-    public function callMany(string $model, string $method, array $llamadas, int $paralelo = 6): array
+    public function callMany(string $model, string $method, array $llamadas, int $paralelo = 3): array
     {
         $uid = $this->uid();
         $salida = [];
-        foreach (array_chunk($llamadas, $paralelo, true) as $lote) {
+        $intentos = [];
+        $cola = $llamadas;
+        while ($cola) {
+            $lote = array_slice($cola, 0, $paralelo, true);
+            $cola = array_diff_key($cola, $lote);
             $resp = Http::pool(fn (Pool $pool) => array_map(
                 fn ($k) => $pool->as((string) $k)->timeout(300)->post($this->url . '/jsonrpc', $this->payload('object', 'execute_kw', [
                     $this->db, $uid, $this->apiKey, $model, $method, $lote[$k][0], (object) ($lote[$k][1] ?? []),
                 ])),
                 array_keys($lote)
             ));
-            foreach (array_keys($lote) as $k) {
+            $frenado = null;
+            foreach ($lote as $k => $llamada) {
+                $r = $resp[(string) $k] ?? $resp[$k] ?? null;
+                // Odoo frenó por exceso: vuelve al principio de la cola y se espera antes de seguir
+                if (self::esFreno($r) && ($intentos[$k] ?? 0) < self::REINTENTOS) {
+                    $intentos[$k] = ($intentos[$k] ?? 0) + 1;
+                    $cola = [$k => $llamada] + $cola;
+                    $frenado = [$intentos[$k], $r];
+                    continue;
+                }
                 try {
-                    $r = $resp[(string) $k] ?? null;
                     if ($r instanceof \Throwable) throw $r;
                     if (!$r) throw new RuntimeException('Sin respuesta de Odoo');
                     $salida[$k] = $this->resultado($r->throw()->json());
@@ -151,8 +188,63 @@ class OdooClient
                     $salida[$k] = $e;
                 }
             }
+            if ($frenado) {
+                usleep(self::espera(...$frenado) * 1000);
+                $paralelo = max(1, intdiv($paralelo, 2));   // más despacio de acá en adelante
+            }
         }
         return $salida;
+    }
+
+    /**
+     * Escribe valores distintos en muchos registros con pocas llamadas: usa la importación de Odoo (load),
+     * de a $lote registros por llamada. Si un lote falla, se escribe ese lote de a uno para saber cuál fue.
+     * @param array<int,array> $valores id => [campo => valor] (campos que terminan en _id = relación, con su id)
+     * @param callable|null $avance fn(int $hechos)
+     * @return array<int,string> id => error, solo los que fallaron
+     */
+    public function escribirVarios(string $model, array $valores, int $lote = 200, ?callable $avance = null): array
+    {
+        // load necesita las mismas columnas en todo el lote: se agrupan por los campos que cambian
+        $porCampos = [];
+        foreach ($valores as $id => $v) {
+            ksort($v);
+            $porCampos[implode(',', array_keys($v))][$id] = $v;
+        }
+        $llamadas = [];
+        foreach ($porCampos as $campos => $grupo) {
+            $cols = array_map(fn ($c) => str_ends_with($c, '_id') ? "$c/.id" : $c, explode(',', $campos));
+            foreach (array_chunk($grupo, $lote, true) as $i => $chunk) {
+                $filas = [];
+                foreach ($chunk as $id => $v) {
+                    $filas[] = array_merge([(string) $id], array_map(fn ($x) => match (true) {
+                        $x === null || $x === false => '',
+                        is_float($x) => rtrim(rtrim(sprintf('%.6F', $x), '0'), '.'),
+                        default => (string) $x,
+                    }, array_values($v)));
+                }
+                $llamadas["$campos#$i"] = [[array_merge(['.id'], $cols), $filas], array_keys($chunk)];
+            }
+        }
+
+        $errores = [];
+        $hechos = 0;
+        foreach (array_chunk($llamadas, 2, true) as $tanda) {
+            $res = $this->callMany($model, 'load', array_map(fn ($l) => [$l[0]], $tanda), 2);
+            foreach ($tanda as $k => [, $ids]) {
+                $r = $res[$k] ?? null;
+                $ok = is_array($r) && is_array($r['ids'] ?? null) && count($r['ids']) === count($ids)
+                    && !array_filter($r['messages'] ?? [], fn ($m) => ($m['type'] ?? '') === 'error');
+                if (!$ok) {
+                    // el lote no entró (load deshace todo el lote): de a uno con write
+                    $fallas = $this->writeMany($model, array_map(fn ($id) => [[$id], $valores[$id]], array_combine($ids, $ids)), 2);
+                    $errores += $fallas;
+                }
+                $hechos += count($ids);
+                if ($avance) $avance($hechos);
+            }
+        }
+        return $errores;
     }
 
     /** Crea varios registros en una sola llamada. Devuelve los ids en el mismo orden. */
@@ -230,7 +322,7 @@ class OdooClient
      * @param array<int|string,array{0:int[],1:array}> $escrituras clave => [ids, valores]
      * @return array<int|string,string> clave => mensaje, solo las que fallaron
      */
-    public function writeMany(string $model, array $escrituras, int $paralelo = 6): array
+    public function writeMany(string $model, array $escrituras, int $paralelo = 3): array
     {
         $llamadas = array_map(fn ($e) => [[array_values($e[0]), $e[1]]], $escrituras);
         $errores = [];

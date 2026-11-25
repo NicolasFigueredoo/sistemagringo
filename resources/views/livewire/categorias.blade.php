@@ -4,7 +4,7 @@
 
     <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-            <h1 class="page-title">Categorías</h1>
+            <h1 class="page-title">Categorías <span class="align-middle text-sm font-medium text-slate-400">· {{ \App\Support\Instancia::nombreEste() }} ({{ preg_replace('#^https?://|/.*$#', '', (string) config('odoo.url')) }})</span></h1>
             <p class="page-subtitle">La ganancia y el descuento de cada categoría se aplican automáticamente en las próximas listas. Vacío usa el valor del proveedor.</p>
         </div>
         <button wire:click="sincronizar" class="btn-secondary">
@@ -46,7 +46,7 @@
                 @forelse($categorias as $c)
                     <tr wire:key="c-{{ $c->id }}">
                         <td class="!align-middle font-medium text-slate-900">{{ $c->nombre }}<div class="text-xs font-normal text-slate-500 md:hidden">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }} productos</div></td>
-                        <td class="!align-middle text-right tabular-nums text-slate-500 max-md:!hidden">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }}</td>
+                        <td class="!align-middle text-right tabular-nums max-md:!hidden {{ ($conteo[$c->id] ?? 0) ? 'text-slate-500' : 'text-slate-300' }}">{{ number_format($conteo[$c->id] ?? 0, 0, ',', '.') }}</td>
                         <td class="td-half !align-middle" data-label="Ganancia">
                             <div class="relative mx-auto w-24 max-md:mx-0 max-md:w-full">
                                 <input type="text" inputmode="decimal" placeholder="—" value="{{ $pct($c->margen) }}"

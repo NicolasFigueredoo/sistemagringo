@@ -22,8 +22,9 @@ use Livewire\Component;
 class Odoos extends Component
 {
     public string $buscar = '';
-    /** todas | ambos | viejo | nuevo */
+    /** todas | viejo (todas las del viejo) | nuevo (todas las del nuevo) | faltan (solo en el viejo) | sobran (solo en el nuevo) */
     public string $filtro = 'todas';
+    public bool $soloConProductos = false;
     /** dónde se aplica el %: viejo | nuevo | ambos */
     public string $destino = 'nuevo';
     public int $redondeo = 0;
@@ -183,13 +184,32 @@ class Odoos extends Component
             'prods_nuevo' => array_sum(array_map(fn ($f) => $f['nuevo']['n'] ?? 0, $todas)),
         ];
 
+        // pestañas: qué categorías se ven (con o sin productos, salvo que se tilde "solo con productos")
+        $pestanias = [
+            'todas'  => ['Todas', fn ($f) => true],
+            'viejo'  => ['Del viejo', fn ($f) => (bool) $f['viejo']],
+            'nuevo'  => ['Del nuevo', fn ($f) => (bool) $f['nuevo']],
+            'faltan' => ['Faltan en el nuevo', fn ($f) => $f['viejo'] && !$f['nuevo']],
+            'sobran' => ['Solo en el nuevo', fn ($f) => !$f['viejo'] && $f['nuevo']],
+        ];
+        if (!isset($pestanias[$this->filtro])) $this->filtro = 'todas';
+        $conProductos = fn ($f) => !$this->soloConProductos || ($f['viejo']['n'] ?? 0) + ($f['nuevo']['n'] ?? 0) > 0;
         $q = mb_strtolower(trim($this->buscar));
-        $filas = array_filter($todas, fn ($f) => ($q === '' || str_contains(mb_strtolower($f['nombre']), $q)) && match ($this->filtro) {
-            'ambos' => $f['viejo'] && $f['nuevo'],
-            'viejo' => $f['viejo'] && !$f['nuevo'],
-            'nuevo' => !$f['viejo'] && $f['nuevo'],
-            default => true,
-        });
+        $buscada = fn ($f) => $q === '' || str_contains(mb_strtolower($f['nombre']), $q);
+        $cuentas = array_map(fn ($p) => count(array_filter($todas, fn ($f) => $p[1]($f) && $conProductos($f) && $buscada($f))), $pestanias);
+        $filas = array_filter($todas, fn ($f) => $pestanias[$this->filtro][1]($f) && $conProductos($f) && $buscada($f));
+        $pestanias = array_map(fn ($p) => $p[0], $pestanias);
+
+        // cuándo se leyeron por última vez los dos Odoo
+        $leidas = [];
+        foreach (['viejo' => 'sqlite_viejo', 'nuevo' => Instancia::conexionPrincipal()] as $lado => $con) {
+            try {
+                $u = DB::connection($con)->table('categorias')->max('updated_at');
+                $leidas[$lado] = $u ? \Illuminate\Support\Carbon::parse($u) : null;
+            } catch (\Throwable) {
+                $leidas[$lado] = null;
+            }
+        }
         $conPct = count(array_filter($todas, fn ($f) => trim((string) ($this->pct[$f['id']] ?? '')) !== ''));
 
         $tarea = Progreso::actual();
@@ -200,6 +220,6 @@ class Odoos extends Component
         if ($esperando > 8 && PHP_SAPI === 'cli-server') Progreso::lanzarProceso();
         $sinProceso = $esperando > 75;
 
-        return view('livewire.odoos', compact('filas', 'stats', 'conPct', 'tarea', 'enCurso', 'sinProceso'));
+        return view('livewire.odoos', compact('filas', 'stats', 'conPct', 'tarea', 'enCurso', 'sinProceso', 'pestanias', 'cuentas', 'leidas'));
     }
 }
