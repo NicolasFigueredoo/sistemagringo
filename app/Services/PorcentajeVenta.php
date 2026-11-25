@@ -33,8 +33,8 @@ class PorcentajeVenta
         $resumen = ['destinos' => [], 'categorias' => count($porcentajes)];
         foreach ($destinos as $d) {
             [$cfg, $conexion, $nombre] = $d === 'viejo'
-                ? [Instancia::configPrincipal(), Instancia::conexionPrincipal(), 'Odoo viejo']
-                : [Instancia::configSecundario(), 'sqlite_viejo', 'Odoo nuevo'];
+                ? [Instancia::configSecundario(), 'sqlite_viejo', 'Odoo viejo']
+                : [Instancia::configPrincipal(), Instancia::conexionPrincipal(), 'Odoo nuevo'];
             $resumen['destinos'][$d] = $this->aplicarEn(OdooClient::desdeArray($cfg), $conexion, $nombre, $porcentajes, $redondeo);
         }
         $resumen['segundos'] = (int) round(microtime(true) - $inicio);

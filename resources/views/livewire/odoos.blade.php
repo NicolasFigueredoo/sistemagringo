@@ -4,6 +4,9 @@
     $pctBar = $tarea && ($tarea['total'] ?? 0) > 0 ? min(100, round($tarea['hechos'] / $tarea['total'] * 100)) : null;
     $segmento = fn ($activo) => $activo ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-800';
     $destinoTxt = ['viejo' => 'el Odoo viejo', 'nuevo' => 'el Odoo nuevo', 'ambos' => 'los dos Odoo'][$destino] ?? '';
+    $host = fn ($c) => preg_replace('#^https?://|/.*$#', '', (string) ($c['url'] ?? ''));
+    $hostViejo = $host(\App\Support\Instancia::configSecundario());
+    $hostNuevo = $host(\App\Support\Instancia::configPrincipal());
 @endphp
 <div class="space-y-6" @if($enCurso) wire:poll.1500ms @endif>
     <x-cargando target="actualizarListas" texto="Leyendo los dos Odoo…" />
@@ -12,7 +15,7 @@
     <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
             <h1 class="page-title">Odoo viejo <span class="text-slate-300">→</span> Odoo nuevo</h1>
-            <p class="page-subtitle">Pasá todo del viejo al nuevo, compará las categorías y aplicá el porcentaje de venta.</p>
+            <p class="page-subtitle">Viejo: <b class="font-medium text-slate-700">{{ $hostViejo }}</b> <span class="text-slate-300">→</span> Nuevo: <b class="font-medium text-slate-700">{{ $hostNuevo }}</b></p>
         </div>
         <button wire:click="actualizarListas" class="btn-secondary" @disabled($enCurso) title="Vuelve a leer categorías y productos de los dos Odoo, sin cambiar nada">
             <x-icon name="refresh" class="h-4 w-4" /> Actualizar listas
@@ -35,11 +38,11 @@
                 </span>
                 <div>
                     <h2 class="card-title">Sincronizar todo</h2>
-                    <p class="mt-0.5 text-sm text-slate-500">Crea en el nuevo las categorías y productos que faltan, y deja igual el costo, la venta, la categoría y el stock. El viejo no se modifica.</p>
+                    <p class="mt-0.5 text-sm text-slate-500">Deja el nuevo igual al viejo: crea las categorías y productos que faltan, y a los que ya están les pone el nombre, los códigos, el costo, la venta, la categoría y el stock del viejo. El viejo no se modifica.</p>
                 </div>
             </div>
             <button wire:click="sincronizarTodo" class="btn-primary btn-lg shrink-0" @disabled($enCurso)
-                    wire:confirm="Se va a pasar todo del Odoo viejo al nuevo: categorías, productos, costos, precios de venta y stock. ¿Seguimos?">
+                    wire:confirm="Se va a copiar todo de {{ $hostViejo }} (viejo) a {{ $hostNuevo }} (nuevo): categorías, productos, nombres, códigos, costos, precios de venta y stock. Lo que hoy tiene el nuevo en esos productos se reemplaza. ¿Seguimos?">
                 <x-icon name="zap" class="h-4 w-4" /> Sincronizar todo
             </button>
         </div>
@@ -142,13 +145,14 @@
     {{-- Resumen de los dos Odoo --}}
     <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
         @foreach([
-            ['Odoo viejo', $stats['cats_viejo'], $stats['prods_viejo'], 'bg-slate-900'],
-            ['Odoo nuevo', $stats['cats_nuevo'], $stats['prods_nuevo'], 'bg-brand-600'],
-        ] as [$t, $c, $p, $dot])
+            ['Odoo viejo', $stats['cats_viejo'], $stats['prods_viejo'], 'bg-slate-900', $hostViejo],
+            ['Odoo nuevo', $stats['cats_nuevo'], $stats['prods_nuevo'], 'bg-brand-600', $hostNuevo],
+        ] as [$t, $c, $p, $dot, $h])
             <div class="card px-4 py-3.5">
                 <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><span class="dot {{ $dot }}"></span>{{ $t }}</div>
                 <div class="mt-1.5 text-2xl font-semibold tabular-nums text-slate-900">{{ $n($c) }} <span class="text-sm font-normal text-slate-500">categorías</span></div>
                 <div class="text-sm tabular-nums text-slate-500">{{ $n($p) }} productos</div>
+                <div class="mt-1 truncate text-xs text-slate-400">{{ $h }}</div>
             </div>
         @endforeach
         <button wire:click="$set('filtro', 'viejo')" class="card px-4 py-3.5 text-left transition hover:border-amber-300">

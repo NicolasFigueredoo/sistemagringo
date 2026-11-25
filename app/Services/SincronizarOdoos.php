@@ -9,7 +9,7 @@ use RuntimeException;
  * Deja el Odoo nuevo igual al viejo:
  *  1. categorías: crea las que faltan (con su categoría padre)
  *  2. productos: los empareja por código de barras, referencia o nombre exacto; crea los que faltan
- *     y a los que ya están les actualiza costo, precio de venta y categoría (y completa código de barras / referencia vacíos)
+ *     y a los que ya están les pisa nombre, códigos, costo, precio de venta y categoría con los del viejo
  *  3. stock: el disponible de cada producto queda igual al del viejo (ajuste de inventario)
  *  4. guarda los dos catálogos en las bases locales
  * Todo en lotes y en paralelo. Nunca escribe en el Odoo viejo.
@@ -36,10 +36,11 @@ class SincronizarOdoos
 
     public static function crear(?callable $avance = null): self
     {
-        foreach (['Odoo viejo' => Instancia::configPrincipal(), 'Odoo nuevo' => Instancia::configSecundario()] as $nombre => $c) {
+        // viejo = ferreteria-tio-gringo (ODOO_VIEJO_*), nuevo = ferreteriatiogringo (ODOO_*)
+        foreach (['Odoo viejo (ODOO_VIEJO_*)' => Instancia::configSecundario(), 'Odoo nuevo (ODOO_*)' => Instancia::configPrincipal()] as $nombre => $c) {
             if (empty($c['user']) || empty($c['api_key'])) throw new RuntimeException("Falta el usuario o la API key del $nombre en el .env.");
         }
-        return new self(OdooClient::desdeArray(Instancia::configPrincipal()), OdooClient::desdeArray(Instancia::configSecundario()), $avance);
+        return new self(OdooClient::desdeArray(Instancia::configSecundario()), OdooClient::desdeArray(Instancia::configPrincipal()), $avance);
     }
 
     public function ejecutar(): array
@@ -60,7 +61,7 @@ class SincronizarOdoos
         $campos = array_merge(CatalogoLocal::CAMPOS_PRODUCTO, ['qty_available', 'uom_id']);
         $pv = array_column($this->viejo->searchReadTodo('product.product', [['active', '=', true]], array_merge($campos, $this->tipoCamposViejo)), null, 'id');
         $pn = array_column($this->nuevo->searchReadTodo('product.product', [['active', '=', true]], array_merge($campos, $this->tipoCamposNuevo)), null, 'id');
-        foreach ($pn as $p) if ($p['barcode']) $this->barcodesNuevo[$p['barcode']] = true;
+        foreach ($pn as $p) if ($p['barcode']) $this->barcodesNuevo[trim($p['barcode'])] = $p['id'];   // código de barras => producto del nuevo
 
         $this->paso('Emparejando productos');
         $pares = $this->emparejar($pv, $pn);
@@ -70,8 +71,8 @@ class SincronizarOdoos
         $this->stock($pv, $pn, $pares, $creados);
 
         $this->paso('Guardando las listas locales');
-        CatalogoLocal::guardar(Instancia::conexionPrincipal(), $catsViejo, array_values($pv));
-        CatalogoLocal::actualizar($this->nuevo, 'sqlite_viejo');
+        CatalogoLocal::guardar('sqlite_viejo', $catsViejo, array_values($pv));
+        CatalogoLocal::actualizar($this->nuevo, Instancia::conexionPrincipal());
 
         $this->resumen['segundos'] = (int) round(microtime(true) - $inicio);
         $this->resumen['productos_viejo'] = count($pv);
@@ -230,7 +231,7 @@ class SincronizarOdoos
     {
         $barcode = trim((string) ($p['barcode'] ?: ''));
         if ($barcode !== '' && isset($this->barcodesNuevo[$barcode])) $barcode = '';
-        if ($barcode !== '') $this->barcodesNuevo[$barcode] = true;
+        if ($barcode !== '') $this->barcodesNuevo[$barcode] = -1;   // lo va a tener un producto que se está creando
         $cat = is_array($p['categ_id']) ? ($mapCat[$p['categ_id'][0]] ?? null) : null;
         $uom = is_array($p['uom_id'] ?? null) ? ($unidades[$p['uom_id'][0]] ?? null) : null;
 
@@ -267,7 +268,7 @@ class SincronizarOdoos
         return $ids;
     }
 
-    /** Costo, venta, categoría y códigos vacíos de los productos que ya estaban en el nuevo. */
+    /** Nombre, códigos, costo, venta y categoría del viejo en los productos que ya estaban en el nuevo. */
     private function actualizar(array $pv, array $pn, array $pares, array $creados, array $mapCat): void
     {
         $grupos = [];   // mismos cambios => se escriben juntos en una sola llamada
@@ -280,12 +281,20 @@ class SincronizarOdoos
             if (abs((float) $v['list_price'] - (float) $n['list_price']) >= 0.005) $cambios['list_price'] = (float) $v['list_price'];
             $cat = is_array($v['categ_id']) ? ($mapCat[$v['categ_id'][0]] ?? null) : null;
             if ($cat && $cat !== (is_array($n['categ_id']) ? $n['categ_id'][0] : null)) $cambios['categ_id'] = $cat;
+            // el nuevo queda igual al viejo: nombre y códigos también se pisan
+            if (trim((string) $v['name']) !== trim((string) $n['name'])) $cambios['name'] = $v['name'];
+            if ((string) ($v['default_code'] ?: '') !== (string) ($n['default_code'] ?: '')) $cambios['default_code'] = $v['default_code'] ?: false;
             $bc = trim((string) ($v['barcode'] ?: ''));
-            if (!$n['barcode'] && $bc !== '' && !isset($this->barcodesNuevo[$bc])) {
-                $cambios['barcode'] = $bc;
-                $this->barcodesNuevo[$bc] = true;
+            $bcNuevo = trim((string) ($n['barcode'] ?: ''));
+            if ($bc !== $bcNuevo) {
+                $duenio = $bc !== '' ? ($this->barcodesNuevo[$bc] ?? null) : null;
+                // si otro producto del nuevo ya tiene ese código de barras, Odoo no deja repetirlo: se deja como está
+                if ($duenio === null || $duenio === $nid) {
+                    $cambios['barcode'] = $bc !== '' ? $bc : false;
+                    if ($bcNuevo !== '') unset($this->barcodesNuevo[$bcNuevo]);
+                    if ($bc !== '') $this->barcodesNuevo[$bc] = $nid;
+                }
             }
-            if (!$n['default_code'] && $v['default_code']) $cambios['default_code'] = $v['default_code'];
 
             if (!$cambios) { $this->resumen['sin_cambios']++; continue; }
             ksort($cambios);

@@ -781,7 +781,7 @@ class Procesador
         [$erroresCrear, $avisosCrear] = [[], []];
         $aCrear = $items->filter(fn ($it) => $it->crear);
         if ($aCrear->isNotEmpty()) {
-            // listas: solo en el Odoo viejo; facturas: en los dos
+            // listas: solo en el Odoo nuevo; facturas: en los dos
             $otro = $carga->es_factura ? $this->otro() : null;
             [$erroresCrear, $avisosCrear] = (new CreadorProductos($this->odoo, $otro))->crear($carga, $aCrear);
             $items = $items->reject(fn ($it) => isset($erroresCrear[$it->id]))->values();

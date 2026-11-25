@@ -34,9 +34,9 @@ class Odoos extends Component
 
     public function mount(): void
     {
-        // arranca con la ganancia ya guardada de cada categoría (primero la del viejo)
+        // arranca con la ganancia ya guardada de cada categoría (primero la del nuevo, que es la que usan las listas)
         foreach ($this->filas() as $f) {
-            $m = $f['viejo']['margen'] ?? $f['nuevo']['margen'] ?? null;
+            $m = $f['nuevo']['margen'] ?? $f['viejo']['margen'] ?? null;
             if ($m !== null) $this->pct[$f['id']] = self::texto($m);
         }
     }
@@ -108,8 +108,8 @@ class Odoos extends Component
         @set_time_limit(0);
         try {
             $t = microtime(true);
-            [$cv, $prv] = CatalogoLocal::actualizar(OdooClient::desdeArray(Instancia::configPrincipal()), Instancia::conexionPrincipal());
-            [$cn, $prn] = CatalogoLocal::actualizar(OdooClient::desdeArray(Instancia::configSecundario()), 'sqlite_viejo');
+            [, $prv] = CatalogoLocal::actualizar(OdooClient::desdeArray(Instancia::configSecundario()), 'sqlite_viejo');
+            [, $prn] = CatalogoLocal::actualizar(OdooClient::desdeArray(Instancia::configPrincipal()), Instancia::conexionPrincipal());
             $this->mensaje = sprintf('Listas actualizadas en %d s: viejo %s productos, nuevo %s productos.',
                 round(microtime(true) - $t), self::n($prv), self::n($prn));
         } catch (\Throwable $e) {
@@ -129,7 +129,7 @@ class Odoos extends Component
 
     private function configurados(): bool
     {
-        foreach (['viejo' => Instancia::configPrincipal(), 'nuevo' => Instancia::configSecundario()] as $n => $c) {
+        foreach (['viejo (ODOO_VIEJO_USER / ODOO_VIEJO_API_KEY)' => Instancia::configSecundario(), 'nuevo (ODOO_USER / ODOO_API_KEY)' => Instancia::configPrincipal()] as $n => $c) {
             if (empty($c['user']) || empty($c['api_key'])) {
                 $this->error = "Falta el usuario o la API key del Odoo $n en el .env.";
                 return false;
@@ -142,7 +142,7 @@ class Odoos extends Component
     private function filas(): array
     {
         $filas = [];
-        foreach (['viejo' => Instancia::conexionPrincipal(), 'nuevo' => 'sqlite_viejo'] as $lado => $con) {
+        foreach (['viejo' => 'sqlite_viejo', 'nuevo' => Instancia::conexionPrincipal()] as $lado => $con) {
             try {
                 $db = DB::connection($con);
                 $conteo = $db->table('odoo_productos')->selectRaw('categ_id, COUNT(*) as n')->groupBy('categ_id')->pluck('n', 'categ_id');

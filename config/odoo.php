@@ -5,23 +5,24 @@ return [
     'db'      => (env('ODOO_DB') ?: 'ferreteriatiogringo'),
     'user'    => env('ODOO_USER'),
     'api_key' => env('ODOO_API_KEY'),
+    // Odoo NUEVO (ferreteriatiogringo): todo el sistema trabaja contra este
     // nombre que se muestra en pantalla
-    'nombre'  => env('ODOO_NOMBRE', 'Odoo viejo'),
+    'nombre'  => env('ODOO_NOMBRE', 'Odoo nuevo'),
 
     // ubicación donde se suma el stock que ingresa (vacío = "Existencias" del primer depósito)
     'stock_location_id' => env('ODOO_STOCK_LOCATION_ID'),
 
-    // Odoo viejo: solo para cargar facturas por foto (pantallas /viejo)
+    // Odoo VIEJO (ferreteria-tio-gringo): facturas por foto (pantallas /viejo) y origen de "Sincronizar todo"
     'viejo' => [
         'url'     => (env('ODOO_VIEJO_URL') ?: 'https://ferreteria-tio-gringo.odoo.com'),
         'db'      => (env('ODOO_VIEJO_DB') ?: 'ferreteria-tio-gringo'),
         'user'    => env('ODOO_VIEJO_USER'),
         'api_key' => env('ODOO_VIEJO_API_KEY'),
         'stock_location_id' => env('ODOO_VIEJO_STOCK_LOCATION_ID'),
-        'nombre'  => env('ODOO_VIEJO_NOMBRE', 'Odoo nuevo'),
+        'nombre'  => env('ODOO_VIEJO_NOMBRE', 'Odoo viejo'),
     ],
 
-    // Sistema nuevo en pausa (por defecto): no se muestran sus pantallas /viejo ni se toca ese Odoo desde las cargas.
+    // Pantallas del Odoo viejo en pausa (por defecto): no se muestran las pantallas /viejo ni se toca ese Odoo desde las cargas.
     // Para volver a usarlo: ODOO_NUEVO_PAUSADO=false en el .env
     'nuevo_pausado' => (bool) env('ODOO_NUEVO_PAUSADO', true),
 

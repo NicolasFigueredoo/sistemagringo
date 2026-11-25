@@ -85,9 +85,9 @@ class SubirFactura extends Component
         try {
             Instancia::usar(!$viejo);
             $m = (new Procesador(OdooClient::desdeConfig()))->sincronizarCatalogo();
-            $this->aviso .= ' En el ' . ($viejo ? 'Odoo nuevo' : 'Odoo viejo') . ": $m productos.";
+            $this->aviso .= ' En el ' . Instancia::nombreOtro() . ": $m productos.";
         } catch (\Throwable $e) {
-            $this->error = 'No se pudo bajar el catálogo del ' . ($viejo ? 'Odoo nuevo' : 'Odoo viejo') . ': ' . $e->getMessage();
+            $this->error = 'No se pudo bajar el catálogo del ' . Instancia::nombreOtro() . ': ' . $e->getMessage();
         } finally {
             Instancia::usar($viejo);
         }

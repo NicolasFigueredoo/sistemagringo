@@ -41,7 +41,7 @@ class Instancia
         return self::$original['odoo'] ?? config('odoo');
     }
 
-    /** Conexión del Odoo del sistema principal (el que en pantalla figura como "Odoo viejo"). */
+    /** Conexión del Odoo NUEVO (ferreteriatiogringo): el del sistema principal. */
     public static function configPrincipal(): array
     {
         $o = self::base();
@@ -49,13 +49,13 @@ class Instancia
         return $o;
     }
 
-    /** Conexión del Odoo de las pantallas /viejo (el que en pantalla figura como "Odoo nuevo"). */
+    /** Conexión del Odoo VIEJO (ferreteria-tio-gringo): el de las pantallas /viejo. */
     public static function configSecundario(): array
     {
         return self::base()['viejo'] + ['stock_location_id' => null];
     }
 
-    /** Base local del sistema principal (la del Odoo secundario es siempre "sqlite_viejo"). */
+    /** Base local del Odoo nuevo (la del viejo es siempre "sqlite_viejo"). */
     public static function conexionPrincipal(): string
     {
         return self::$original['db'] ?? config('database.principal') ?? config('database.default');
@@ -91,13 +91,13 @@ class Instancia
     }
 
     /**
-     * Nombre que ve el usuario. En el menú las pantallas /viejo figuran como "Odoo nuevo" y las principales como "Odoo viejo";
+     * Nombre que ve el usuario: las pantallas /viejo son el "Odoo viejo" y las principales el "Odoo nuevo";
      * se puede cambiar con ODOO_NOMBRE y ODOO_VIEJO_NOMBRE.
      */
     public static function nombre(bool $viejo): string
     {
         $o = self::base();
-        return $viejo ? ($o['viejo']['nombre'] ?? 'Odoo nuevo') : ($o['nombre'] ?? 'Odoo viejo');
+        return $viejo ? ($o['viejo']['nombre'] ?? 'Odoo viejo') : ($o['nombre'] ?? 'Odoo nuevo');
     }
 
     public static function nombreEste(): string
